@@ -20,6 +20,9 @@ class Settings:
         self.jira_email = self._get_required_env("JIRA_EMAIL")
         self.jira_api_token = self._get_required_env("JIRA_API_TOKEN")
 
+        self.mattermost_url = self._get_required_env("MATTERMOST_URL")
+        self.mattermost_bot_token = self._get_required_env("MATTERMOST_BOT_TOKEN")
+
         self.agent_context_path = os.getenv("AGENT_CONTEXT_PATH", "AGENT.md")
 
         self.log_dir = os.getenv("LOG_DIR", "logs")

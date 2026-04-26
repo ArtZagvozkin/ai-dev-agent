@@ -86,7 +86,6 @@ app/
 ## Требования
 
 Для запуска нужны:
-
 - доступ к GitLab API;
 - доступ к Jira Cloud API;
 - OpenAI-compatible LLM provider.

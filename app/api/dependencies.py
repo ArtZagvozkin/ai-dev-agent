@@ -6,6 +6,7 @@ from app.components.review.comment_publisher import ReviewCommentPublisher
 from app.core.config import Settings, get_settings
 from app.infrastructure.gitlab.client import GitLabClient
 from app.infrastructure.jira.client import JiraClient
+from app.infrastructure.mattermost.client import MattermostClient
 
 
 settings = get_settings()
@@ -28,6 +29,11 @@ jira = JiraClient(
     base_url=settings.jira_url,
     email=settings.jira_email,
     api_token=settings.jira_api_token,
+)
+
+mattermost = MattermostClient(
+    base_url=settings.mattermost_url,
+    token=settings.mattermost_bot_token,
 )
 
 diff_line_localizer = DiffLineLocalizer()
@@ -56,6 +62,10 @@ def get_gitlab_client() -> GitLabClient:
 
 def get_jira_client() -> JiraClient:
     return jira
+
+
+def get_mattermost_client() -> MattermostClient:
+    return mattermost
 
 
 def get_code_review_workflow() -> CodeReviewWorkflow:

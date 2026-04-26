@@ -85,3 +85,16 @@ class LLMDiagnosticResponse(BaseModel):
     model: str
     input: str
     output: str
+
+
+class MattermostTestMessageRequest(BaseModel):
+    channel_id: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+
+
+class MattermostPostResponse(BaseModel):
+    id: str
+    channel_id: str
+    message: str
+    user_id: str | None = None
+    create_at: int | None = None
