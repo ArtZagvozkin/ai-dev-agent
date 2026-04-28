@@ -72,6 +72,59 @@ class ReviewWithPublishResponse(BaseModel):
     issues: list[ReviewIssue] = Field(default_factory=list)
     published_comments: list[PublishedIssueComment] = Field(default_factory=list)
 
+
+class CodebaseConsultationRequest(BaseModel):
+    repository_path: str = Field(min_length=1)
+    question: str = Field(min_length=1)
+    top_k: int = Field(default=6, ge=1, le=20)
+    max_files: int = Field(default=2_000, ge=1, le=10_000)
+    max_file_bytes: int = Field(default=200_000, ge=1, le=5_000_000)
+    force_reindex: bool = False
+    include_full_code_units: bool = True
+
+
+class CodebaseConsultationSource(BaseModel):
+    chunk_id: str
+    parent_chunk_id: str | None = None
+    chunk_type: str
+    path: str
+    language: str
+    start_line: int
+    end_line: int
+    symbol: str | None = None
+    ast_node_type: str | None = None
+    declaration_type: str | None = None
+    parent_symbol: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+    imports: list[str] = Field(default_factory=list)
+    references: list[str] = Field(default_factory=list)
+    top_level_symbols: list[str] = Field(default_factory=list)
+    score: float
+    snippet: str
+    contextualized_text: str
+    code_unit: str | None = None
+    is_full_code_unit: bool = False
+
+
+class CodebaseConsultationRetrievedChunk(CodebaseConsultationSource):
+    bm25_score: float
+    vector_score: float
+    combined_score: float
+
+
+class CodebaseConsultationIndexStats(BaseModel):
+    repository_path: str
+    files_indexed: int
+    chunks_indexed: int
+
+
+class CodebaseConsultationResponse(BaseModel):
+    answer: str
+    sources: list[CodebaseConsultationSource] = Field(default_factory=list)
+    retrieved_chunks: list[CodebaseConsultationRetrievedChunk] = Field(default_factory=list)
+    index_stats: CodebaseConsultationIndexStats
+
+
 class LLMDiagnosticRequest(BaseModel):
     message: str = Field(min_length=1)
 

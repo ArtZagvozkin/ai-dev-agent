@@ -14,6 +14,9 @@ dependencies = [
     "requests",
     "openai",
     "pydantic",
+    "qdrant-client",
+    "tree-sitter",
+    "tree-sitter-languages",
 ]
 
 [tool.setuptools.packages.find]
