@@ -98,3 +98,22 @@ class MattermostPostResponse(BaseModel):
     message: str
     user_id: str | None = None
     create_at: int | None = None
+
+class CodebaseConsultationRequest(BaseModel):
+    question: str = Field(min_length=1)
+    max_results: int = Field(default=10, ge=1, le=50)
+
+
+class CodebaseSource(BaseModel):
+    file_path: str
+    line_start: int | None = None
+    line_end: int | None = None
+    snippet: str = ""
+    reason: str | None = None
+
+
+class CodebaseConsultationResponse(BaseModel):
+    question: str
+    answer: str
+    search_queries: list[str] = Field(default_factory=list)
+    sources: list[CodebaseSource] = Field(default_factory=list)
