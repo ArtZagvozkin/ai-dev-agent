@@ -10,8 +10,9 @@ logger = logging.getLogger(__name__)
 
 
 class StructuredLLMClient:
-    def __init__(self, model: str, api_key: str, base_url: str):
+    def __init__(self, model: str, api_key: str, base_url: str, max_tokens: int = 5000):
         self.model = model
+        self.max_tokens = max_tokens
         self.client = OpenAI(api_key=api_key, base_url=base_url)
 
     def response(
@@ -23,16 +24,17 @@ class StructuredLLMClient:
         response_schema = response_model.model_json_schema()
 
         logger.info(
-            "LLM request started: model=%s, response_model=%s, prompt_size=%s",
+            "LLM request started: model=%s, response_model=%s, prompt_size=%s, max_tokens=%s",
             self.model,
             response_model.__name__,
             len(user_message),
+            self.max_tokens,
         )
 
         try:
             completion = self.client.chat.completions.create(
                 model=self.model,
-                max_tokens=5000,
+                max_tokens=self.max_tokens,
                 response_format={
                     "type": "json_schema",
                     "json_schema": {

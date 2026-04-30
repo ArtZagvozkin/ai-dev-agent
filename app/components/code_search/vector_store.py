@@ -8,6 +8,10 @@ from app.components.code_search.models import CodeChunk, VectorSearchHit
 
 
 class VectorStore(Protocol):
+    def has_index(self, expected_points: int) -> bool:
+        """Checks whether the store already contains a reusable index for this chunk set."""
+        ...
+
     def upsert(self, chunks: list[CodeChunk], vectors: list[list[float]]) -> None:
         """Stores chunk vectors so they can be queried later by similarity."""
         ...
@@ -27,6 +31,10 @@ class InMemoryVectorStore:
         """Replaces the current in-memory vector set with the latest indexed chunks."""
         self._chunks = chunks
         self._vectors = vectors
+
+    def has_index(self, expected_points: int) -> bool:
+        """Reports whether the in-memory store already has vectors for the expected chunk count."""
+        return len(self._chunks) == expected_points and len(self._vectors) == expected_points
 
     def search(self, query_vector: list[float], limit: int) -> list[VectorSearchHit]:
         """Computes cosine similarity in memory and returns the top matching chunks."""
@@ -83,6 +91,16 @@ class QdrantVectorStore:
         self._client = None
         self._models = None
         self._vector_size: int | None = None
+
+    def has_index(self, expected_points: int) -> bool:
+        """Checks whether the Qdrant collection already contains the expected number of points."""
+        client = self._get_client()
+        if not client.collection_exists(self.collection_name):
+            return False
+
+        count_response = client.count(collection_name=self.collection_name, exact=True)
+        points_count = getattr(count_response, "count", None)
+        return points_count == expected_points
 
     def upsert(self, chunks: list[CodeChunk], vectors: list[list[float]]) -> None:
         """Creates the collection if needed and uploads the current chunk vectors to Qdrant."""

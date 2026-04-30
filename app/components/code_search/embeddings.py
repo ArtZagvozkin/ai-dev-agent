@@ -82,10 +82,12 @@ class OpenAIEmbeddingClient:
         api_key: str,
         base_url: str | None = None,
         dimensions: int | None = None,
+        batch_size: int = 64,
     ):
         """Configures an OpenAI-compatible embeddings client for remote vectorization."""
         self.model = model
         self.dimensions = dimensions
+        self.batch_size = max(batch_size, 1)
         self.client = OpenAI(api_key=api_key, base_url=base_url)
 
     def embed_text(self, text: str) -> list[float]:
@@ -94,6 +96,18 @@ class OpenAIEmbeddingClient:
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Requests embeddings for a batch of texts from an OpenAI-compatible API."""
+        if not texts:
+            return []
+
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), self.batch_size):
+            batch = texts[start : start + self.batch_size]
+            vectors.extend(self._embed_batch(batch))
+
+        return vectors
+
+    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Requests one provider batch and validates that the response contains embeddings."""
         payload = {
             "model": self.model,
             "input": texts,
@@ -107,7 +121,27 @@ class OpenAIEmbeddingClient:
         except Exception as error:
             raise HTTPException(status_code=502, detail=f"Embedding request failed: {error}")
 
-        return [list(item.embedding) for item in response.data]
+        response_data = getattr(response, "data", None)
+        if not response_data:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Embedding provider returned an empty 'data' payload. "
+                    f"Model={self.model}, batch_size={len(texts)}"
+                ),
+            )
+
+        vectors = [list(item.embedding) for item in response_data if getattr(item, "embedding", None) is not None]
+        if len(vectors) != len(texts):
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Embedding provider returned a partial embeddings payload. "
+                    f"Model={self.model}, requested={len(texts)}, received={len(vectors)}"
+                ),
+            )
+
+        return vectors
 
 
 def build_embedding_client(settings) -> EmbeddingClient:
@@ -119,6 +153,7 @@ def build_embedding_client(settings) -> EmbeddingClient:
             api_key=settings.embedding_api_key,
             base_url=settings.embedding_base_url,
             dimensions=settings.embedding_dimensions,
+            batch_size=getattr(settings, "embedding_batch_size", 64),
         )
 
     return HashingEmbeddingClient(dimensions=settings.embedding_dimensions or 256)

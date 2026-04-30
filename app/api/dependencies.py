@@ -19,6 +19,7 @@ llm = StructuredLLMClient(
     model=settings.model_llm,
     api_key=settings.openrouter_api_key,
     base_url=settings.base_url,
+    max_tokens=settings.llm_max_tokens,
 )
 
 context_builder = ContextBuilder()
@@ -65,6 +66,7 @@ code_review_workflow = CodeReviewWorkflow(
 codebase_consultation_workflow = CodebaseConsultationWorkflow(
     llm=llm,
     index_cache=codebase_index_cache,
+    agent_context_path=settings.agent_context_path,
 )
 
 
