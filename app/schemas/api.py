@@ -83,6 +83,18 @@ class CodebaseConsultationRequest(BaseModel):
     include_full_code_units: bool = True
 
 
+class CodebaseConsultationQueryPlan(BaseModel):
+    project_context_path: str | None = None
+    project_context_loaded: bool = False
+    original_question: str
+    intent: str = ""
+    subqueries: list[str] = Field(default_factory=list)
+    retrieval_queries: list[str] = Field(default_factory=list)
+    preferred_chunk_types: list[str] = Field(default_factory=list)
+    path_hints: list[str] = Field(default_factory=list)
+    retrieval_mode: str = "single_query"
+
+
 class CodebaseConsultationSource(BaseModel):
     chunk_id: str
     parent_chunk_id: str | None = None
@@ -120,6 +132,7 @@ class CodebaseConsultationIndexStats(BaseModel):
 
 class CodebaseConsultationResponse(BaseModel):
     answer: str
+    query_plan: CodebaseConsultationQueryPlan
     sources: list[CodebaseConsultationSource] = Field(default_factory=list)
     retrieved_chunks: list[CodebaseConsultationRetrievedChunk] = Field(default_factory=list)
     index_stats: CodebaseConsultationIndexStats

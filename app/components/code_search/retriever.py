@@ -1,9 +1,13 @@
 import math
 from collections import Counter, defaultdict
+import logging
 
 from app.components.code_search.embeddings import EmbeddingClient, tokenize
 from app.components.code_search.models import CodeChunk, RetrievedChunk
 from app.components.code_search.vector_store import InMemoryVectorStore, VectorStore
+
+
+logger = logging.getLogger(__name__)
 
 
 class BM25Index:
@@ -70,8 +74,20 @@ class HybridRetriever:
         self._searchable_texts = [self._searchable_text(chunk) for chunk in chunks]
         self._tokenized_chunks = [tokenize(text) for text in self._searchable_texts]
         self._bm25 = BM25Index(self._tokenized_chunks)
-        self._vectors = self.embedding_client.embed_texts(self._searchable_texts)
-        self.vector_store.upsert(chunks=self.chunks, vectors=self._vectors)
+        self._vectors: list[list[float]] = []
+
+        if self.vector_store.has_index(expected_points=len(self.chunks)):
+            logger.info(
+                "Hybrid retriever reused existing vector index: chunks=%s",
+                len(self.chunks),
+            )
+        else:
+            logger.info(
+                "Hybrid retriever building vector index: chunks=%s",
+                len(self.chunks),
+            )
+            self._vectors = self.embedding_client.embed_texts(self._searchable_texts)
+            self.vector_store.upsert(chunks=self.chunks, vectors=self._vectors)
 
     def search(self, query: str, top_k: int = 5) -> list[RetrievedChunk]:
         """Executes hybrid retrieval and merges lexical and vector ranks with RRF."""
