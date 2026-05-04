@@ -1,4 +1,5 @@
 import math
+import hashlib
 from collections import Counter, defaultdict
 import logging
 
@@ -8,6 +9,7 @@ from app.components.code_search.vector_store import InMemoryVectorStore, VectorS
 
 
 logger = logging.getLogger(__name__)
+INDEX_SCHEMA_VERSION = "code-search-v2-file-window"
 
 
 class BM25Index:
@@ -66,6 +68,7 @@ class HybridRetriever:
         chunks: list[CodeChunk],
         embedding_client: EmbeddingClient,
         vector_store: VectorStore | None = None,
+        force_reindex: bool = False,
     ):
         """Combines lexical BM25 and vector search into one hybrid retriever."""
         self.chunks = chunks
@@ -75,8 +78,12 @@ class HybridRetriever:
         self._tokenized_chunks = [tokenize(text) for text in self._searchable_texts]
         self._bm25 = BM25Index(self._tokenized_chunks)
         self._vectors: list[list[float]] = []
+        self._index_fingerprint = self._build_index_fingerprint(chunks)
 
-        if self.vector_store.has_index(expected_points=len(self.chunks)):
+        if not force_reindex and self.vector_store.has_index(
+            expected_points=len(self.chunks),
+            index_fingerprint=self._index_fingerprint,
+        ):
             logger.info(
                 "Hybrid retriever reused existing vector index: chunks=%s",
                 len(self.chunks),
@@ -87,15 +94,28 @@ class HybridRetriever:
                 len(self.chunks),
             )
             self._vectors = self.embedding_client.embed_texts(self._searchable_texts)
-            self.vector_store.upsert(chunks=self.chunks, vectors=self._vectors)
+            self.vector_store.upsert(
+                chunks=self.chunks,
+                vectors=self._vectors,
+                index_fingerprint=self._index_fingerprint,
+            )
 
-    def search(self, query: str, top_k: int = 5) -> list[RetrievedChunk]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        bm25_query: str | None = None,
+        vector_query: str | None = None,
+    ) -> list[RetrievedChunk]:
         """Executes hybrid retrieval and merges lexical and vector ranks with RRF."""
         if not self.chunks:
             return []
 
-        bm25_scores = self._bm25.scores(query)
-        query_vector = self.embedding_client.embed_text(query)
+        bm25_text = bm25_query or query
+        vector_text = vector_query or query
+
+        bm25_scores = self._bm25.scores(bm25_text)
+        query_vector = self.embedding_client.embed_text(vector_text)
         vector_hits = self.vector_store.search(query_vector=query_vector, limit=max(top_k * 4, 20))
         vector_scores_by_key = {hit.cache_key(): hit.vector_score for hit in vector_hits}
 
@@ -158,6 +178,26 @@ class HybridRetriever:
     def _searchable_text(self, chunk: CodeChunk) -> str:
         """Builds the text representation used for tokenization and embeddings."""
         return chunk.contextualized_text
+
+    def _build_index_fingerprint(self, chunks: list[CodeChunk]) -> str:
+        """Builds a stable fingerprint for the current chunk schema and repository contents."""
+        digest = hashlib.sha256()
+        digest.update(INDEX_SCHEMA_VERSION.encode("utf-8"))
+        for chunk in chunks:
+            digest.update(
+                "\x1f".join(
+                    [
+                        chunk.chunk_id,
+                        chunk.chunk_type,
+                        chunk.path,
+                        str(chunk.start_line),
+                        str(chunk.end_line),
+                        chunk.contextualized_text,
+                    ]
+                ).encode("utf-8")
+            )
+            digest.update(b"\x1e")
+        return digest.hexdigest()
 
     def _rank_map(self, scores: list[float]) -> dict[int, int]:
         """Converts positive scores into 1-based ranking positions."""

@@ -76,22 +76,37 @@ class ReviewWithPublishResponse(BaseModel):
 class CodebaseConsultationRequest(BaseModel):
     repository_path: str = Field(min_length=1)
     question: str = Field(min_length=1)
-    top_k: int = Field(default=6, ge=1, le=20)
+    top_k: int = Field(default=10, ge=1, le=20)
     max_files: int = Field(default=2_000, ge=1, le=10_000)
     max_file_bytes: int = Field(default=200_000, ge=1, le=5_000_000)
     force_reindex: bool = False
     include_full_code_units: bool = True
 
 
+class CodebaseConsultationRetrievalSubquery(BaseModel):
+    id: str = ""
+    vector_query: str = ""
+    bm25_query: str = ""
+    extensions: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    path_hints: list[str] = Field(default_factory=list)
+    top_k: int = 15
+
+
 class CodebaseConsultationQueryPlan(BaseModel):
     project_context_path: str | None = None
+    configured_project_context_path: str = ""
     project_context_loaded: bool = False
     original_question: str
     intent: str = ""
-    subqueries: list[str] = Field(default_factory=list)
+    subqueries: list[CodebaseConsultationRetrievalSubquery] = Field(default_factory=list)
+    answer_focus: list[str] = Field(default_factory=list)
     retrieval_queries: list[str] = Field(default_factory=list)
     preferred_chunk_types: list[str] = Field(default_factory=list)
     path_hints: list[str] = Field(default_factory=list)
+    extensions: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    final_top_k: int = 10
     retrieval_mode: str = "single_query"
 
 

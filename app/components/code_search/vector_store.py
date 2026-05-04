@@ -8,11 +8,16 @@ from app.components.code_search.models import CodeChunk, VectorSearchHit
 
 
 class VectorStore(Protocol):
-    def has_index(self, expected_points: int) -> bool:
+    def has_index(self, expected_points: int, index_fingerprint: str | None = None) -> bool:
         """Checks whether the store already contains a reusable index for this chunk set."""
         ...
 
-    def upsert(self, chunks: list[CodeChunk], vectors: list[list[float]]) -> None:
+    def upsert(
+        self,
+        chunks: list[CodeChunk],
+        vectors: list[list[float]],
+        index_fingerprint: str | None = None,
+    ) -> None:
         """Stores chunk vectors so they can be queried later by similarity."""
         ...
 
@@ -26,15 +31,24 @@ class InMemoryVectorStore:
         """Initializes a lightweight in-process vector store for local use and tests."""
         self._chunks: list[CodeChunk] = []
         self._vectors: list[list[float]] = []
+        self._index_fingerprint: str | None = None
 
-    def upsert(self, chunks: list[CodeChunk], vectors: list[list[float]]) -> None:
+    def upsert(
+        self,
+        chunks: list[CodeChunk],
+        vectors: list[list[float]],
+        index_fingerprint: str | None = None,
+    ) -> None:
         """Replaces the current in-memory vector set with the latest indexed chunks."""
         self._chunks = chunks
         self._vectors = vectors
+        self._index_fingerprint = index_fingerprint
 
-    def has_index(self, expected_points: int) -> bool:
+    def has_index(self, expected_points: int, index_fingerprint: str | None = None) -> bool:
         """Reports whether the in-memory store already has vectors for the expected chunk count."""
-        return len(self._chunks) == expected_points and len(self._vectors) == expected_points
+        if len(self._chunks) != expected_points or len(self._vectors) != expected_points:
+            return False
+        return index_fingerprint is None or self._index_fingerprint == index_fingerprint
 
     def search(self, query_vector: list[float], limit: int) -> list[VectorSearchHit]:
         """Computes cosine similarity in memory and returns the top matching chunks."""
@@ -74,6 +88,8 @@ class InMemoryVectorStore:
 
 
 class QdrantVectorStore:
+    METADATA_POINT_ID = 0
+
     def __init__(
         self,
         collection_name: str,
@@ -92,7 +108,7 @@ class QdrantVectorStore:
         self._models = None
         self._vector_size: int | None = None
 
-    def has_index(self, expected_points: int) -> bool:
+    def has_index(self, expected_points: int, index_fingerprint: str | None = None) -> bool:
         """Checks whether the Qdrant collection already contains the expected number of points."""
         client = self._get_client()
         if not client.collection_exists(self.collection_name):
@@ -100,24 +116,39 @@ class QdrantVectorStore:
 
         count_response = client.count(collection_name=self.collection_name, exact=True)
         points_count = getattr(count_response, "count", None)
-        return points_count == expected_points
+        if points_count != expected_points + 1:
+            return False
+        if not index_fingerprint:
+            return True
 
-    def upsert(self, chunks: list[CodeChunk], vectors: list[list[float]]) -> None:
+        metadata = self._retrieve_metadata_payload(client)
+        return metadata.get("index_fingerprint") == index_fingerprint
+
+    def upsert(
+        self,
+        chunks: list[CodeChunk],
+        vectors: list[list[float]],
+        index_fingerprint: str | None = None,
+    ) -> None:
         """Creates the collection if needed and uploads the current chunk vectors to Qdrant."""
         if not chunks or not vectors:
             return
 
         client = self._get_client()
         models = self._get_models()
-        self._ensure_collection(client, models, vector_size=len(vectors[0]))
+        vector_size = len(vectors[0])
+        self._ensure_collection(client, models, vector_size=vector_size, recreate=True)
 
         points = [
+            self._metadata_point(models, vector_size, index_fingerprint),
+            *[
             models.PointStruct(
-                id=index,
+                id=index + 1,
                 vector=vector,
                 payload=self._payload_from_chunk(chunk),
             )
             for index, (chunk, vector) in enumerate(zip(chunks, vectors))
+            ],
         ]
 
         client.upsert(collection_name=self.collection_name, points=points)
@@ -147,6 +178,8 @@ class QdrantVectorStore:
         hits: list[VectorSearchHit] = []
         for point in points:
             payload = point.payload or {}
+            if payload.get("payload_type") != "chunk":
+                continue
             hits.append(
                 VectorSearchHit(
                     chunk_id=payload["chunk_id"],
@@ -173,12 +206,18 @@ class QdrantVectorStore:
 
         return hits
 
-    def _ensure_collection(self, client, models, vector_size: int) -> None:
+    def _ensure_collection(self, client, models, vector_size: int, recreate: bool = False) -> None:
         """Ensures that the target Qdrant collection exists with the correct vector size."""
-        if self._vector_size == vector_size and client.collection_exists(self.collection_name):
+        exists = client.collection_exists(self.collection_name)
+        if recreate and exists:
+            client.delete_collection(collection_name=self.collection_name)
+            exists = False
+            self._vector_size = None
+
+        if self._vector_size == vector_size and exists:
             return
 
-        if not client.collection_exists(self.collection_name):
+        if not exists:
             client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=models.VectorParams(
@@ -188,6 +227,34 @@ class QdrantVectorStore:
             )
 
         self._vector_size = vector_size
+
+    def _metadata_point(self, models, vector_size: int, index_fingerprint: str | None):
+        """Builds a marker point used to detect stale persistent indexes."""
+        return models.PointStruct(
+            id=self.METADATA_POINT_ID,
+            vector=[1.0] + [0.0] * (vector_size - 1),
+            payload={
+                "payload_type": "index_metadata",
+                "index_fingerprint": index_fingerprint,
+                "chunk_schema": "code-search-v2-file-window",
+            },
+        )
+
+    def _retrieve_metadata_payload(self, client) -> dict:
+        """Fetches the persistent index metadata point when it exists."""
+        if not hasattr(client, "retrieve"):
+            return {}
+
+        points = client.retrieve(
+            collection_name=self.collection_name,
+            ids=[self.METADATA_POINT_ID],
+            with_payload=True,
+            with_vectors=False,
+        )
+        if not points:
+            return {}
+
+        return getattr(points[0], "payload", None) or {}
 
     def _get_client(self):
         """Lazily constructs the Qdrant client with the configured transport settings."""
@@ -223,6 +290,7 @@ class QdrantVectorStore:
     def _payload_from_chunk(self, chunk: CodeChunk) -> dict:
         """Serializes chunk metadata into the payload stored alongside each vector."""
         return {
+            "payload_type": "chunk",
             "chunk_id": chunk.chunk_id,
             "parent_chunk_id": chunk.parent_chunk_id,
             "chunk_type": chunk.chunk_type,

@@ -16,7 +16,7 @@ dependencies = [
     "pydantic",
     "qdrant-client",
     "tree-sitter",
-    "tree-sitter-languages",
+    "tree-sitter-language-pack==0.13.0",
 ]
 
 [tool.setuptools.packages.find]
