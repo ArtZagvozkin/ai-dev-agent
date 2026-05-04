@@ -71,6 +71,7 @@ class CodebaseIndex:
         stats: IndexStats,
         embedding_client: EmbeddingClient | None = None,
         vector_store=None,
+        force_vector_reindex: bool = False,
     ):
         """Wraps indexed chunks and initializes the retriever used for question answering."""
         self.chunks = chunks
@@ -79,11 +80,23 @@ class CodebaseIndex:
             chunks,
             embedding_client=embedding_client or HashingEmbeddingClient(),
             vector_store=vector_store or InMemoryVectorStore(),
+            force_reindex=force_vector_reindex,
         )
 
-    def search(self, query: str, top_k: int = 5) -> list[RetrievedChunk]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        bm25_query: str | None = None,
+        vector_query: str | None = None,
+    ) -> list[RetrievedChunk]:
         """Runs hybrid retrieval over the indexed chunks for a developer query."""
-        return self._retriever.search(query=query, top_k=top_k)
+        return self._retriever.search(
+            query=query,
+            top_k=top_k,
+            bm25_query=bm25_query,
+            vector_query=vector_query,
+        )
 
     def stats_payload(self) -> dict:
         """Formats index statistics for API responses and diagnostics."""
@@ -111,6 +124,7 @@ class CodebaseIndexer:
         repository_path: str | Path,
         max_files: int = 2_000,
         max_file_bytes: int = 200_000,
+        force_vector_reindex: bool = False,
     ) -> CodebaseIndex:
         """Scans a repository path, chunks files, and produces a searchable code index."""
         root_path = Path(repository_path).resolve()
@@ -142,6 +156,7 @@ class CodebaseIndexer:
             stats=stats,
             embedding_client=self.embedding_client,
             vector_store=self.vector_store_factory(root_path),
+            force_vector_reindex=force_vector_reindex,
         )
 
     def _scan_files(self, root_path: Path, max_files: int, max_file_bytes: int) -> list[Path]:
@@ -209,6 +224,7 @@ class CodebaseIndexCache:
                 repository_path=repository_path,
                 max_files=max_files,
                 max_file_bytes=max_file_bytes,
+                force_vector_reindex=force_reindex,
             )
 
         return self._cache[key]
