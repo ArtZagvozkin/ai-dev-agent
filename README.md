@@ -10,7 +10,7 @@ AI Dev Agent - это MVP FastAPI-сервиса для автоматическ
 
 ## Что умеет текущая версия
 
-- получать задачу из Jira Cloud;
+- получать задачу из Jira;
 - получать merge request и diff из GitLab;
 - загружать `AGENT.md` из target branch MR;
 - формировать prompt для LLM;
@@ -308,12 +308,10 @@ AGENT.md
 
 - нет PostgreSQL;
 - нет Qdrant;
-- нет RAG по Confluence;
 - нет очередей задач;
 - нет фоновой обработки;
 - нет `Assignment` и `Job`;
 - нет webhook endpoint для GitLab/Jira;
-- нет авторизации входящих запросов к FastAPI;
 - нет защиты от повторной публикации одинаковых комментариев;
 - нет хранения истории ревью;
 - нет retry-механизма для LLM/GitLab/Jira;

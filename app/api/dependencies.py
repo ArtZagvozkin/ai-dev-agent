@@ -86,13 +86,17 @@ def get_mattermost_client() -> MattermostClient:
     return mattermost
 
 
+def get_llm_client() -> StructuredLLMClient:
+    return llm
+
+
+def get_codebase_index_cache() -> CodebaseIndexCache:
+    return codebase_index_cache
+
+
 def get_code_review_workflow() -> CodeReviewWorkflow:
     return code_review_workflow
 
 
 def get_codebase_consultation_workflow() -> CodebaseConsultationWorkflow:
     return codebase_consultation_workflow
-
-
-def get_llm_client() -> StructuredLLMClient:
-    return llm

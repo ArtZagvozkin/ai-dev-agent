@@ -7,6 +7,8 @@ from app.components.code_search.embeddings import cosine_similarity
 from app.components.code_search.models import CodeChunk, VectorSearchHit
 
 
+QDRANT_UPSERT_BATCH_SIZE = 50
+
 class VectorStore(Protocol):
     def has_index(self, expected_points: int, index_fingerprint: str | None = None) -> bool:
         """Checks whether the store already contains a reusable index for this chunk set."""
@@ -139,19 +141,35 @@ class QdrantVectorStore:
         vector_size = len(vectors[0])
         self._ensure_collection(client, models, vector_size=vector_size, recreate=True)
 
-        points = [
-            self._metadata_point(models, vector_size, index_fingerprint),
-            *[
-            models.PointStruct(
-                id=index + 1,
-                vector=vector,
-                payload=self._payload_from_chunk(chunk),
-            )
-            for index, (chunk, vector) in enumerate(zip(chunks, vectors))
-            ],
-        ]
+        metadata_point = self._metadata_point(models, vector_size, index_fingerprint)
+        client.upsert(
+            collection_name=self.collection_name,
+            points=[metadata_point],
+        )
 
-        client.upsert(collection_name=self.collection_name, points=points)
+        batch: list = []
+
+        for index, (chunk, vector) in enumerate(zip(chunks, vectors), start=1):
+            batch.append(
+                models.PointStruct(
+                    id=index,
+                    vector=vector,
+                    payload=self._payload_from_chunk(chunk),
+                )
+            )
+
+            if len(batch) >= QDRANT_UPSERT_BATCH_SIZE:
+                client.upsert(
+                    collection_name=self.collection_name,
+                    points=batch,
+                )
+                batch = []
+
+        if batch:
+            client.upsert(
+                collection_name=self.collection_name,
+                points=batch,
+            )
 
     def search(self, query_vector: list[float], limit: int) -> list[VectorSearchHit]:
         """Queries Qdrant for the nearest stored vectors and maps payloads back to hits."""

@@ -73,6 +73,46 @@ class ReviewWithPublishResponse(BaseModel):
     published_comments: list[PublishedIssueComment] = Field(default_factory=list)
 
 
+class LLMDiagnosticRequest(BaseModel):
+    message: str = Field(min_length=1)
+
+
+class LLMDiagnosticLLMResponse(BaseModel):
+    output: str
+
+
+class LLMDiagnosticResponse(BaseModel):
+    ok: bool
+    model: str
+    input: str
+    output: str
+
+
+class MattermostTestMessageRequest(BaseModel):
+    channel_id: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+
+
+class MattermostPostResponse(BaseModel):
+    id: str
+    channel_id: str
+    message: str
+    user_id: str | None = None
+    create_at: int | None = None
+
+
+class CodebaseIndexRebuildRequest(BaseModel):
+    repository_path: str = Field(min_length=1)
+    max_files: int = Field(default=2_000, ge=1, le=10_000)
+    max_file_bytes: int = Field(default=200_000, ge=1, le=5_000_000)
+
+
+class CodebaseIndexRebuildResponse(BaseModel):
+    repository_path: str
+    files_indexed: int
+    chunks_indexed: int
+
+
 class CodebaseConsultationRequest(BaseModel):
     repository_path: str = Field(min_length=1)
     question: str = Field(min_length=1)
@@ -151,31 +191,3 @@ class CodebaseConsultationResponse(BaseModel):
     sources: list[CodebaseConsultationSource] = Field(default_factory=list)
     retrieved_chunks: list[CodebaseConsultationRetrievedChunk] = Field(default_factory=list)
     index_stats: CodebaseConsultationIndexStats
-
-
-class LLMDiagnosticRequest(BaseModel):
-    message: str = Field(min_length=1)
-
-
-class LLMDiagnosticLLMResponse(BaseModel):
-    output: str
-
-
-class LLMDiagnosticResponse(BaseModel):
-    ok: bool
-    model: str
-    input: str
-    output: str
-
-
-class MattermostTestMessageRequest(BaseModel):
-    channel_id: str = Field(min_length=1)
-    message: str = Field(min_length=1)
-
-
-class MattermostPostResponse(BaseModel):
-    id: str
-    channel_id: str
-    message: str
-    user_id: str | None = None
-    create_at: int | None = None
