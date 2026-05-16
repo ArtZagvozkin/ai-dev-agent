@@ -72,6 +72,7 @@ class ReviewWithPublishResponse(BaseModel):
     issues: list[ReviewIssue] = Field(default_factory=list)
     published_comments: list[PublishedIssueComment] = Field(default_factory=list)
 
+
 class LLMDiagnosticRequest(BaseModel):
     message: str = Field(min_length=1)
 
@@ -99,21 +100,94 @@ class MattermostPostResponse(BaseModel):
     user_id: str | None = None
     create_at: int | None = None
 
+
+class CodebaseIndexRebuildRequest(BaseModel):
+    repository_path: str = Field(min_length=1)
+    max_files: int = Field(default=2_000, ge=1, le=10_000)
+    max_file_bytes: int = Field(default=200_000, ge=1, le=5_000_000)
+
+
+class CodebaseIndexRebuildResponse(BaseModel):
+    repository_path: str
+    files_indexed: int
+    chunks_indexed: int
+
+
 class CodebaseConsultationRequest(BaseModel):
+    repository_path: str = Field(min_length=1)
     question: str = Field(min_length=1)
-    max_results: int = Field(default=10, ge=1, le=50)
+    top_k: int = Field(default=10, ge=1, le=20)
+    max_files: int = Field(default=2_000, ge=1, le=10_000)
+    max_file_bytes: int = Field(default=200_000, ge=1, le=5_000_000)
+    force_reindex: bool = False
+    include_full_code_units: bool = True
 
 
-class CodebaseSource(BaseModel):
-    file_path: str
-    line_start: int | None = None
-    line_end: int | None = None
-    snippet: str = ""
-    reason: str | None = None
+class CodebaseConsultationRetrievalSubquery(BaseModel):
+    id: str = ""
+    vector_query: str = ""
+    bm25_query: str = ""
+    extensions: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    path_hints: list[str] = Field(default_factory=list)
+    top_k: int = 15
+
+
+class CodebaseConsultationQueryPlan(BaseModel):
+    project_context_path: str | None = None
+    configured_project_context_path: str = ""
+    project_context_loaded: bool = False
+    original_question: str
+    intent: str = ""
+    subqueries: list[CodebaseConsultationRetrievalSubquery] = Field(default_factory=list)
+    answer_focus: list[str] = Field(default_factory=list)
+    retrieval_queries: list[str] = Field(default_factory=list)
+    preferred_chunk_types: list[str] = Field(default_factory=list)
+    path_hints: list[str] = Field(default_factory=list)
+    extensions: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    final_top_k: int = 10
+    retrieval_mode: str = "single_query"
+
+
+class CodebaseConsultationSource(BaseModel):
+    chunk_id: str
+    parent_chunk_id: str | None = None
+    chunk_type: str
+    path: str
+    language: str
+    start_line: int
+    end_line: int
+    symbol: str | None = None
+    ast_node_type: str | None = None
+    declaration_type: str | None = None
+    parent_symbol: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+    imports: list[str] = Field(default_factory=list)
+    references: list[str] = Field(default_factory=list)
+    top_level_symbols: list[str] = Field(default_factory=list)
+    score: float
+    snippet: str
+    contextualized_text: str
+    code_unit: str | None = None
+    is_full_code_unit: bool = False
+
+
+class CodebaseConsultationRetrievedChunk(CodebaseConsultationSource):
+    bm25_score: float
+    vector_score: float
+    combined_score: float
+
+
+class CodebaseConsultationIndexStats(BaseModel):
+    repository_path: str
+    files_indexed: int
+    chunks_indexed: int
 
 
 class CodebaseConsultationResponse(BaseModel):
-    question: str
     answer: str
-    search_queries: list[str] = Field(default_factory=list)
-    sources: list[CodebaseSource] = Field(default_factory=list)
+    query_plan: CodebaseConsultationQueryPlan
+    sources: list[CodebaseConsultationSource] = Field(default_factory=list)
+    retrieved_chunks: list[CodebaseConsultationRetrievedChunk] = Field(default_factory=list)
+    index_stats: CodebaseConsultationIndexStats

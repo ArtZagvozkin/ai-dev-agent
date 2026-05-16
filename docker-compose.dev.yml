@@ -5,6 +5,7 @@ services:
     image: artzagvozkin/ai-dev-agent:0.1.0
     volumes:
       - ./app:/app/app
+      - /opt/packetfence:/opt/packetfence:ro
       - ./logs:/app/logs
     command: >
       python -m uvicorn app.main:app

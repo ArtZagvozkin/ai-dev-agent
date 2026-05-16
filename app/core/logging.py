@@ -16,7 +16,7 @@ class DailyLogFileHandler(TimedRotatingFileHandler):
         ai-dev-agent.log
 
     При смене дня переносит старый файл в:
-        ai-dev-agent.2026-04-24.log
+        ai-dev-agent.YYYY-MM-DD.log
     """
 
     def __init__(
@@ -40,10 +40,10 @@ class DailyLogFileHandler(TimedRotatingFileHandler):
     def rotation_filename(self, default_name: str) -> str:
         """
         TimedRotatingFileHandler по умолчанию делает:
-            ai-dev-agent.log.2026-04-24
+            ai-dev-agent.log.YYYY-MM-DD
 
         Нам нужен формат:
-            ai-dev-agent.2026-04-24.log
+            ai-dev-agent.YYYY-MM-DD.log
         """
 
         default_path = Path(default_name)

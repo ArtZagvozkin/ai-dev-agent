@@ -5,9 +5,15 @@ logs/
 # Python cache
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.hypothesis/
 
 # Virtual env
 venv/
+.venv/
 .env/
 
 # Env files
@@ -18,6 +24,21 @@ venv/
 # IDE
 .vscode/
 .idea/
+
+# Python build artifacts
+*.egg-info/
+build/
+dist/
+
+# Coverage and test output
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Local evaluation artifacts
+.deepeval/
 
 # OS trash
 .DS_Store
