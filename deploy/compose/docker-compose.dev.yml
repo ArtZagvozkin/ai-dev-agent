@@ -1,12 +1,13 @@
 services:
   ai-dev-agent:
     build:
-      context: .
+      context: /opt/ai-dev-agent
+      dockerfile: deploy/compose/Dockerfile
     image: artzagvozkin/ai-dev-agent:0.1.0
     volumes:
-      - ./app:/app/app
+      - /opt/ai-dev-agent/logs:/app/logs
+      - /opt/ai-dev-agent/app:/app/app
       - /opt/packetfence:/opt/packetfence:ro
-      - ./logs:/app/logs
     command: >
       python -m uvicorn app.main:app
       --host 0.0.0.0

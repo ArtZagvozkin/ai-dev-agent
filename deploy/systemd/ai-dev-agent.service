@@ -1,0 +1,18 @@
+[Unit]
+Description=AI Dev Agent
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/ai-dev-agent
+RemainAfterExit=yes
+
+ExecStart=/usr/bin/docker compose --project-directory /opt/ai-dev-agent --env-file /opt/ai-dev-agent/.env -f /opt/ai-dev-agent/deploy/compose/docker-compose.yml -f /opt/ai-dev-agent/deploy/compose/docker-compose.dev.yml up -d --build
+ExecStop=/usr/bin/docker compose --project-directory /opt/ai-dev-agent --env-file /opt/ai-dev-agent/.env -f /opt/ai-dev-agent/deploy/compose/docker-compose.yml -f /opt/ai-dev-agent/deploy/compose/docker-compose.dev.yml down
+ExecReload=/usr/bin/docker compose --project-directory /opt/ai-dev-agent --env-file /opt/ai-dev-agent/.env -f /opt/ai-dev-agent/deploy/compose/docker-compose.yml -f /opt/ai-dev-agent/deploy/compose/docker-compose.dev.yml up -d --no-deps --build ai-dev-agent
+
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
