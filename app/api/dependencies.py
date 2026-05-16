@@ -1,16 +1,24 @@
+from collections.abc import Generator
+
+from fastapi import Depends
+from sqlalchemy.orm import Session
+
 from app.application.skills.code_review.context_builder import ContextBuilder
+from app.application.skills.code_review.workflow import CodeReviewWorkflow
 from app.application.skills.codebase_consultation.workflow import CodebaseConsultationWorkflow
 from app.components.code_search.embeddings import build_embedding_client
 from app.components.code_search.indexer import CodebaseIndexCache, CodebaseIndexer
 from app.components.code_search.vector_store import build_vector_store_factory
-from app.application.skills.code_review.workflow import CodeReviewWorkflow
 from app.components.diff.localizer import DiffLineLocalizer
 from app.components.llm.structured_client import StructuredLLMClient
 from app.components.review.comment_publisher import ReviewCommentPublisher
 from app.core.config import Settings, get_settings
+from app.database.session import create_db_session
 from app.infrastructure.gitlab.client import GitLabClient
 from app.infrastructure.jira.client import JiraClient
 from app.infrastructure.mattermost.client import MattermostClient
+from app.repositories.code_projects import CodeProjectRepository
+from app.services.code_projects import CodeProjectService
 
 
 settings = get_settings()
@@ -47,8 +55,10 @@ review_comment_publisher = ReviewCommentPublisher(
     gitlab=gitlab,
     localizer=diff_line_localizer,
 )
+
 embedding_client = build_embedding_client(settings)
 vector_store_factory = build_vector_store_factory(settings)
+
 codebase_index_cache = CodebaseIndexCache(
     indexer=CodebaseIndexer(
         embedding_client=embedding_client,
@@ -63,6 +73,7 @@ code_review_workflow = CodeReviewWorkflow(
     jira=jira,
     comment_publisher=review_comment_publisher,
 )
+
 codebase_consultation_workflow = CodebaseConsultationWorkflow(
     llm=llm,
     index_cache=codebase_index_cache,
@@ -100,3 +111,23 @@ def get_code_review_workflow() -> CodeReviewWorkflow:
 
 def get_codebase_consultation_workflow() -> CodebaseConsultationWorkflow:
     return codebase_consultation_workflow
+
+
+def get_db_session() -> Generator[Session, None, None]:
+    yield from create_db_session()
+
+
+def get_code_project_repository(
+    session: Session = Depends(get_db_session),
+) -> CodeProjectRepository:
+    return CodeProjectRepository(session)
+
+
+def get_code_project_service(
+    session: Session = Depends(get_db_session),
+) -> CodeProjectService:
+    repository = CodeProjectRepository(session)
+    return CodeProjectService(
+        repository=repository,
+        session=session,
+    )

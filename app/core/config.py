@@ -27,6 +27,8 @@ class Settings:
 
         self.agent_context_path = os.getenv("AGENT_CONTEXT_PATH", "AGENT.md")
 
+        self.database_url = os.getenv("DATABASE_URL", "").strip()
+
         self.embedding_provider = os.getenv("EMBEDDING_PROVIDER", "hashing").lower()
         self.embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
         self.embedding_api_key = os.getenv("EMBEDDING_API_KEY", self.openrouter_api_key)
