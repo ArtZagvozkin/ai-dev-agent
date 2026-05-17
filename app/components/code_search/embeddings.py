@@ -172,11 +172,18 @@ class OpenAIEmbeddingClient:
                 ),
             )
 
-        vectors = [
-            list(item.embedding)
-            for item in response_data
-            if getattr(item, "embedding", None) is not None
-        ]
+        ordered_items = sorted(
+            response_data,
+            key=lambda item: getattr(item, "index", 0),
+        )
+
+        vectors = []
+        for item in ordered_items:
+            embedding = getattr(item, "embedding", None)
+            if embedding is None:
+                continue
+
+            vectors.append(list(embedding))
 
         if len(vectors) != len(texts):
             raise HTTPException(

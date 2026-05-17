@@ -135,9 +135,9 @@ def get_code_project_repository(
 def get_code_project_service(
     session: Session = Depends(get_db_session),
 ) -> CodeProjectService:
-    repository = CodeProjectRepository(session)
     return CodeProjectService(
-        repository=repository,
+        repository=CodeProjectRepository(session),
+        index_repository=CodebaseIndexRepository(session),
         session=session,
     )
 
@@ -145,10 +145,10 @@ def get_code_project_service(
 def get_codebase_index_service(
     session: Session = Depends(get_db_session),
 ) -> CodebaseIndexService:
-    repository = CodebaseIndexRepository(session)
     return CodebaseIndexService(
-        repository=repository,
+        repository=CodebaseIndexRepository(session),
         session=session,
+        settings=settings,
     )
 
 

@@ -38,6 +38,12 @@ class QdrantCodeChunkVectorWriter:
             ),
         )
 
+    def delete_collection(self) -> None:
+        client = self._get_client()
+
+        if client.collection_exists(self.collection_name):
+            client.delete_collection(collection_name=self.collection_name)
+
     def upsert_vectors(
         self,
         index_id: UUID,

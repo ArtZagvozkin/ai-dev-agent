@@ -59,26 +59,48 @@ class CodebaseIndexBuildService:
         self.indexer = indexer
 
     def build_first_index(self, project_key: str, data: CodebaseIndexBuildRequest):
-        """
-        Builds the first persistent codebase index for a project.
+        return self._build_persistent_index(
+            project_key=project_key,
+            data=data,
+            require_current_index=False,
+            attach_mode="if_empty",
+        )
 
-        Important safety rule:
-        - code_projects.current_index_id is set only after:
+    def rebuild_index(self, project_key: str, data: CodebaseIndexBuildRequest):
+        return self._build_persistent_index(
+            project_key=project_key,
+            data=data,
+            require_current_index=True,
+            attach_mode="overwrite",
+        )
+
+    def _build_persistent_index(
+        self,
+        project_key: str,
+        data: CodebaseIndexBuildRequest,
+        require_current_index: bool,
+        attach_mode: str,
+    ):
+        """
+        Builds a persistent codebase index.
+
+        Safety rule:
+        - current_index_id is changed only after:
           1. chunks are persisted in Postgres;
           2. vectors are persisted in Qdrant;
           3. codebase_indexes.status is switched to 'ready'.
         """
         self._ensure_qdrant_provider()
 
-        prechecked_options = self._precheck_project_for_first_build(
+        self._precheck_project_for_build(
             project_key=project_key,
             data=data,
+            require_current_index=require_current_index,
         )
 
         embedding_config = self._resolve_embedding_config(data)
         embedding_client = self._build_embedding_client(embedding_config)
 
-        # Fail fast before long repository scanning/chunking.
         embedding_dimensions = self._preflight_embedding_provider(
             embedding_client=embedding_client,
             configured_dimensions=embedding_config.dimensions,
@@ -87,9 +109,10 @@ class CodebaseIndexBuildService:
         index = None
 
         try:
-            options = self._lock_project_for_first_build(
+            options = self._lock_project_for_build(
                 project_key=project_key,
                 data=data,
+                require_current_index=require_current_index,
             )
             project = options.project
 
@@ -143,9 +166,6 @@ class CodebaseIndexBuildService:
                     chunks=indexed_file.chunks,
                 )
 
-                # Commit DB progress file-by-file.
-                # The index is still not visible for consultation until status='ready'
-                # and current_index_id is set.
                 self.session.commit()
 
                 searchable_texts = [
@@ -215,16 +235,24 @@ class CodebaseIndexBuildService:
                 chunks_count=chunks_count,
             )
 
-            current_set = self.project_repository.set_current_index_if_empty(
-                project_id=project.id,
-                index_id=index.id,
-            )
+            if attach_mode == "if_empty":
+                current_set = self.project_repository.set_current_index_if_empty(
+                    project_id=project.id,
+                    index_id=index.id,
+                )
+            elif attach_mode == "overwrite":
+                current_set = self.project_repository.set_current_index(
+                    project_id=project.id,
+                    index_id=index.id,
+                )
+            else:
+                raise RuntimeError(f"Unsupported index attach mode: {attach_mode}")
 
             if not current_set:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=(
-                        "Code project got current index while build was running: "
+                        "Code project current index was changed while build was running: "
                         f"{project_key}"
                     ),
                 )
@@ -239,15 +267,12 @@ class CodebaseIndexBuildService:
             self._mark_failed_best_effort(index_id=index.id if index else None, error=exc)
             raise
 
-    def _precheck_project_for_first_build(
+    def _precheck_project_for_build(
         self,
         project_key: str,
         data: CodebaseIndexBuildRequest,
+        require_current_index: bool,
     ) -> BuildProjectOptions:
-        """
-        Performs a cheap project/business validation before touching embedding provider.
-        This avoids external embedding calls for missing projects or already indexed projects.
-        """
         project = self.project_repository.get_by_key(project_key)
 
         if project is None:
@@ -256,35 +281,20 @@ class CodebaseIndexBuildService:
                 detail=f"Code project not found: {project_key}",
             )
 
-        if project.current_index_id is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Code project already has current index: {project_key}",
-            )
-
-        if self.index_repository.has_building_index(project.id):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Code project already has building index: {project_key}",
-            )
-
-        return BuildProjectOptions(
+        self._validate_project_build_state(
             project=project,
-            max_files=data.max_files or project.default_max_files,
-            max_file_bytes=data.max_file_bytes or project.default_max_file_bytes,
+            project_key=project_key,
+            require_current_index=require_current_index,
         )
 
-    def _lock_project_for_first_build(
+        return self._build_project_options(project, data)
+
+    def _lock_project_for_build(
         self,
         project_key: str,
         data: CodebaseIndexBuildRequest,
+        require_current_index: bool,
     ) -> BuildProjectOptions:
-        """
-        Rechecks build preconditions under row lock.
-
-        The earlier precheck is for better API behavior.
-        This locked check is the real concurrency protection.
-        """
         project = self.project_repository.get_by_key_for_update(project_key)
 
         if project is None:
@@ -293,7 +303,30 @@ class CodebaseIndexBuildService:
                 detail=f"Code project not found: {project_key}",
             )
 
-        if project.current_index_id is not None:
+        self._validate_project_build_state(
+            project=project,
+            project_key=project_key,
+            require_current_index=require_current_index,
+        )
+
+        return self._build_project_options(project, data)
+
+    def _validate_project_build_state(
+        self,
+        project: CodeProject,
+        project_key: str,
+        require_current_index: bool,
+    ) -> None:
+        if require_current_index and project.current_index_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Code project has no current index. "
+                    f"Use /code-projects/{project_key}/index/build first."
+                ),
+            )
+
+        if not require_current_index and project.current_index_id is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Code project already has current index: {project_key}",
@@ -305,6 +338,11 @@ class CodebaseIndexBuildService:
                 detail=f"Code project already has building index: {project_key}",
             )
 
+    def _build_project_options(
+        self,
+        project: CodeProject,
+        data: CodebaseIndexBuildRequest,
+    ) -> BuildProjectOptions:
         return BuildProjectOptions(
             project=project,
             max_files=data.max_files or project.default_max_files,

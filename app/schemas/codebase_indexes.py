@@ -22,6 +22,12 @@ class CodebaseIndexBuildRequest(BaseModel):
     embedding_dimensions: int | None = Field(default=None, ge=1, le=20000)
 
 
+class CodeProjectIndexSwitchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    index_id: UUID
+
+
 class CodebaseIndexResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

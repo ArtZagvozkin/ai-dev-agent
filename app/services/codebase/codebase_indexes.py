@@ -1,19 +1,30 @@
+import logging
 from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.components.code_search.vector_writer import QdrantCodeChunkVectorWriter
+from app.core.config import Settings
 from app.repositories.codebase_indexes import CodebaseIndexRepository
 
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_INDEX_STATUSES = {"building", "ready", "failed", "archived"}
 
 
 class CodebaseIndexService:
-    def __init__(self, repository: CodebaseIndexRepository, session: Session):
+    def __init__(
+        self,
+        repository: CodebaseIndexRepository,
+        session: Session,
+        settings: Settings,
+    ):
         self.repository = repository
         self.session = session
+        self.settings = settings
 
     def list_indexes(
         self,
@@ -43,8 +54,11 @@ class CodebaseIndexService:
         return index
 
     def delete_index(self, index_id: UUID):
+        qdrant_collection_name = None
+
         try:
             index = self.get_index(index_id)
+            qdrant_collection_name = index.qdrant_collection_name
 
             if index.is_current:
                 raise HTTPException(
@@ -68,10 +82,6 @@ class CodebaseIndexService:
 
             self.session.commit()
 
-            return {
-                "deleted": True,
-                "index_id": index_id,
-            }
         except HTTPException:
             self.session.rollback()
             raise
@@ -84,3 +94,37 @@ class CodebaseIndexService:
         except Exception:
             self.session.rollback()
             raise
+
+        if qdrant_collection_name:
+            self._delete_qdrant_collection_best_effort(qdrant_collection_name)
+
+        return {
+            "deleted": True,
+            "index_id": index_id,
+        }
+
+    def _delete_qdrant_collection_best_effort(self, collection_name: str) -> None:
+        if self.settings.vector_store_provider != "qdrant":
+            logger.warning(
+                "Skipping Qdrant collection cleanup because VECTOR_STORE_PROVIDER is not qdrant: "
+                "collection=%s, provider=%s",
+                collection_name,
+                self.settings.vector_store_provider,
+            )
+            return
+
+        writer = QdrantCodeChunkVectorWriter(
+            collection_name=collection_name,
+            url=self.settings.qdrant_url or None,
+            api_key=self.settings.qdrant_api_key or None,
+            location=self.settings.qdrant_local_path or None,
+            prefer_grpc=self.settings.qdrant_prefer_grpc,
+        )
+
+        try:
+            writer.delete_collection()
+        except Exception:
+            logger.exception(
+                "Failed to delete Qdrant collection for codebase index: collection=%s",
+                collection_name,
+            )

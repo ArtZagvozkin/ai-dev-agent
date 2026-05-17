@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 
 from app.api.dependencies import get_codebase_index_service
+from app.schemas.code_projects import PROJECT_KEY_PATTERN
 from app.schemas.codebase_indexes import (
     CodebaseIndexDeleteResponse,
     CodebaseIndexListResponse,
@@ -20,7 +21,12 @@ router = APIRouter(
 
 @router.get("", response_model=CodebaseIndexListResponse)
 def list_codebase_indexes(
-    project_key: str | None = Query(default=None, min_length=1, max_length=128),
+    project_key: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=PROJECT_KEY_PATTERN,
+    ),
     index_status: Literal["building", "ready", "failed", "archived"] | None = Query(
         default=None,
         alias="status",

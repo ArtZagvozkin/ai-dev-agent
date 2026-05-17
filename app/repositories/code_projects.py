@@ -221,6 +221,46 @@ class CodeProjectRepository:
 
         return result.rowcount > 0
 
+    def set_current_index(
+        self,
+        project_id: UUID,
+        index_id: UUID,
+    ) -> bool:
+        result = self.session.execute(
+            text(
+                """
+                UPDATE agent.code_projects
+                SET current_index_id = :index_id
+                WHERE id = :project_id
+                """
+            ),
+            {
+                "project_id": project_id,
+                "index_id": index_id,
+            },
+        )
+
+        return result.rowcount > 0
+
+    def clear_current_index(
+        self,
+        project_id: UUID,
+    ) -> bool:
+        result = self.session.execute(
+            text(
+                """
+                UPDATE agent.code_projects
+                SET current_index_id = NULL
+                WHERE id = :project_id
+                """
+            ),
+            {
+                "project_id": project_id,
+            },
+        )
+
+        return result.rowcount > 0
+
     def delete_by_key(self, project_key: str) -> bool:
         result = self.session.execute(
             text(

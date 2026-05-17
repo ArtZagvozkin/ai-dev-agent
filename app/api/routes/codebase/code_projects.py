@@ -13,7 +13,9 @@ from app.schemas.code_projects import (
     CodeProjectUpdateRequest,
 )
 from app.schemas.codebase_indexes import (
+    CodeProjectIndexSwitchRequest,
     CodebaseIndexBuildRequest,
+    CodebaseIndexListResponse,
     CodebaseIndexResponse,
 )
 from app.services.codebase.code_projects import CodeProjectService
@@ -47,6 +49,23 @@ def list_code_projects(
     }
 
 
+@router.get(
+    "/{project_key}/indexes",
+    response_model=CodebaseIndexListResponse,
+)
+def list_project_codebase_indexes(
+    project_key: str = Path(
+        min_length=1,
+        max_length=128,
+        pattern=PROJECT_KEY_PATTERN,
+    ),
+    service: CodeProjectService = Depends(get_code_project_service),
+):
+    return {
+        "items": service.list_project_indexes(project_key),
+    }
+
+
 @router.post(
     "/{project_key}/index/build",
     response_model=CodebaseIndexResponse,
@@ -64,6 +83,60 @@ def build_first_codebase_index(
     return service.build_first_index(
         project_key=project_key,
         data=data,
+    )
+
+
+@router.post(
+    "/{project_key}/index/rebuild",
+    response_model=CodebaseIndexResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def rebuild_codebase_index(
+    data: CodebaseIndexBuildRequest,
+    project_key: str = Path(
+        min_length=1,
+        max_length=128,
+        pattern=PROJECT_KEY_PATTERN,
+    ),
+    service: CodebaseIndexBuildService = Depends(get_codebase_index_build_service),
+):
+    return service.rebuild_index(
+        project_key=project_key,
+        data=data,
+    )
+
+
+@router.post(
+    "/{project_key}/index/detach",
+    response_model=CodeProjectResponse,
+)
+def detach_current_codebase_index(
+    project_key: str = Path(
+        min_length=1,
+        max_length=128,
+        pattern=PROJECT_KEY_PATTERN,
+    ),
+    service: CodeProjectService = Depends(get_code_project_service),
+):
+    return service.detach_current_index(project_key)
+
+
+@router.post(
+    "/{project_key}/index/switch",
+    response_model=CodebaseIndexResponse,
+)
+def switch_current_codebase_index(
+    data: CodeProjectIndexSwitchRequest,
+    project_key: str = Path(
+        min_length=1,
+        max_length=128,
+        pattern=PROJECT_KEY_PATTERN,
+    ),
+    service: CodeProjectService = Depends(get_code_project_service),
+):
+    return service.switch_current_index(
+        project_key=project_key,
+        index_id=data.index_id,
     )
 
 
