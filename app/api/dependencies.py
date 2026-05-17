@@ -18,7 +18,9 @@ from app.infrastructure.gitlab.client import GitLabClient
 from app.infrastructure.jira.client import JiraClient
 from app.infrastructure.mattermost.client import MattermostClient
 from app.repositories.code_projects import CodeProjectRepository
-from app.services.code_projects import CodeProjectService
+from app.services.codebase.code_projects import CodeProjectService
+from app.repositories.codebase_indexes import CodebaseIndexRepository
+from app.services.codebase.codebase_indexes import CodebaseIndexService
 
 
 settings = get_settings()
@@ -131,3 +133,13 @@ def get_code_project_service(
         repository=repository,
         session=session,
     )
+
+def get_codebase_index_service(
+    session: Session = Depends(get_db_session),
+) -> CodebaseIndexService:
+    repository = CodebaseIndexRepository(session)
+    return CodebaseIndexService(
+        repository=repository,
+        session=session,
+    )
+

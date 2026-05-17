@@ -9,7 +9,7 @@ from app.schemas.code_projects import (
     CodeProjectResponse,
     CodeProjectUpdateRequest,
 )
-from app.services.code_projects import CodeProjectService
+from app.services.codebase.code_projects import CodeProjectService
 
 
 router = APIRouter(
