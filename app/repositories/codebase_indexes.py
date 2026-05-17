@@ -87,6 +87,145 @@ class CodebaseIndexRepository:
 
         return self._map_row(row) if row else None
 
+    def has_building_index(self, project_id: UUID) -> bool:
+        row = self.session.execute(
+            text(
+                """
+                SELECT 1
+                FROM agent.codebase_indexes
+                WHERE project_id = :project_id
+                  AND status = 'building'
+                LIMIT 1
+                """
+            ),
+            {"project_id": project_id},
+        ).first()
+
+        return row is not None
+
+    def create_building(
+        self,
+        index_id: UUID,
+        project_id: UUID,
+        index_schema_version: str,
+        embedding_provider: str,
+        embedding_model: str,
+        embedding_dimensions: int,
+        qdrant_collection_name: str,
+    ) -> CodebaseIndex:
+        self.session.execute(
+            text(
+                """
+                INSERT INTO agent.codebase_indexes (
+                    id,
+                    project_id,
+                    status,
+                    index_schema_version,
+                    embedding_provider,
+                    embedding_model,
+                    embedding_dimensions,
+                    qdrant_collection_name,
+                    build_started_at
+                )
+                VALUES (
+                    :id,
+                    :project_id,
+                    'building',
+                    :index_schema_version,
+                    :embedding_provider,
+                    :embedding_model,
+                    :embedding_dimensions,
+                    :qdrant_collection_name,
+                    now()
+                )
+                """
+            ),
+            {
+                "id": index_id,
+                "project_id": project_id,
+                "index_schema_version": index_schema_version,
+                "embedding_provider": embedding_provider,
+                "embedding_model": embedding_model,
+                "embedding_dimensions": embedding_dimensions,
+                "qdrant_collection_name": qdrant_collection_name,
+            },
+        )
+
+        index = self.get_by_id(index_id)
+        assert index is not None
+        return index
+
+    def update_counts(
+        self,
+        index_id: UUID,
+        files_count: int,
+        chunks_count: int,
+    ) -> None:
+        self.session.execute(
+            text(
+                """
+                UPDATE agent.codebase_indexes
+                SET
+                    files_count = :files_count,
+                    chunks_count = :chunks_count
+                WHERE id = :index_id
+                """
+            ),
+            {
+                "index_id": index_id,
+                "files_count": files_count,
+                "chunks_count": chunks_count,
+            },
+        )
+
+    def mark_ready(
+        self,
+        index_id: UUID,
+        files_count: int,
+        chunks_count: int,
+    ) -> CodebaseIndex:
+        self.session.execute(
+            text(
+                """
+                UPDATE agent.codebase_indexes
+                SET
+                    status = 'ready',
+                    files_count = :files_count,
+                    chunks_count = :chunks_count,
+                    build_finished_at = now(),
+                    error_message = NULL
+                WHERE id = :index_id
+                """
+            ),
+            {
+                "index_id": index_id,
+                "files_count": files_count,
+                "chunks_count": chunks_count,
+            },
+        )
+
+        index = self.get_by_id(index_id)
+        assert index is not None
+        return index
+
+    def mark_failed(self, index_id: UUID, error_message: str) -> None:
+        self.session.execute(
+            text(
+                """
+                UPDATE agent.codebase_indexes
+                SET
+                    status = 'failed',
+                    build_finished_at = now(),
+                    error_message = :error_message
+                WHERE id = :index_id
+                """
+            ),
+            {
+                "index_id": index_id,
+                "error_message": error_message[:4000],
+            },
+        )
+
     def delete_by_id(self, index_id: UUID) -> bool:
         result = self.session.execute(
             text(

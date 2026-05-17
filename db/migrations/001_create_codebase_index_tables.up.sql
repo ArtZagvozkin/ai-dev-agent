@@ -20,10 +20,11 @@ CREATE TABLE code_projects (
     review_context_path TEXT,
     consultation_context_path TEXT,
 
-    default_top_k INTEGER NOT NULL DEFAULT 10 CHECK (default_top_k >= 1 AND default_top_k <= 20),
-    max_files INTEGER NOT NULL DEFAULT 7000 CHECK (max_files > 0),
-    max_file_bytes INTEGER NOT NULL DEFAULT 200000 CHECK (max_file_bytes > 0),
-    include_full_code_units BOOLEAN NOT NULL DEFAULT TRUE,
+    default_max_files INTEGER NOT NULL DEFAULT 7000 CHECK (default_max_files > 0),
+    default_max_file_bytes INTEGER NOT NULL DEFAULT 200000 CHECK (default_max_file_bytes > 0),
+
+    default_top_k INTEGER NOT NULL DEFAULT 10,
+    default_include_full_code_units BOOLEAN NOT NULL DEFAULT TRUE,
 
     current_index_id UUID
 );

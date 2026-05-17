@@ -17,9 +17,12 @@ from app.database.session import create_db_session
 from app.infrastructure.gitlab.client import GitLabClient
 from app.infrastructure.jira.client import JiraClient
 from app.infrastructure.mattermost.client import MattermostClient
+from app.repositories.code_chunks import CodeChunkRepository
 from app.repositories.code_projects import CodeProjectRepository
-from app.services.codebase.code_projects import CodeProjectService
+from app.repositories.codebase_files import CodebaseFileRepository
 from app.repositories.codebase_indexes import CodebaseIndexRepository
+from app.services.codebase.code_projects import CodeProjectService
+from app.services.codebase.codebase_index_build import CodebaseIndexBuildService
 from app.services.codebase.codebase_indexes import CodebaseIndexService
 
 
@@ -66,6 +69,10 @@ codebase_index_cache = CodebaseIndexCache(
         embedding_client=embedding_client,
         vector_store_factory=vector_store_factory,
     )
+)
+
+persistent_codebase_indexer = CodebaseIndexer(
+    embedding_client=embedding_client,
 )
 
 code_review_workflow = CodeReviewWorkflow(
@@ -134,6 +141,7 @@ def get_code_project_service(
         session=session,
     )
 
+
 def get_codebase_index_service(
     session: Session = Depends(get_db_session),
 ) -> CodebaseIndexService:
@@ -143,3 +151,16 @@ def get_codebase_index_service(
         session=session,
     )
 
+
+def get_codebase_index_build_service(
+    session: Session = Depends(get_db_session),
+) -> CodebaseIndexBuildService:
+    return CodebaseIndexBuildService(
+        settings=settings,
+        session=session,
+        project_repository=CodeProjectRepository(session),
+        index_repository=CodebaseIndexRepository(session),
+        file_repository=CodebaseFileRepository(session),
+        chunk_repository=CodeChunkRepository(session),
+        indexer=persistent_codebase_indexer,
+    )

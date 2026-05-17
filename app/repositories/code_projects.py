@@ -17,10 +17,10 @@ PROJECT_SELECT_COLUMNS = """
     local_repository_path,
     review_context_path,
     consultation_context_path,
+    default_max_files,
+    default_max_file_bytes,
     default_top_k,
-    max_files,
-    max_file_bytes,
-    include_full_code_units,
+    default_include_full_code_units,
     current_index_id
 """
 
@@ -52,6 +52,26 @@ class CodeProjectRepository:
                         {PROJECT_SELECT_COLUMNS}
                     FROM agent.code_projects
                     WHERE project_key = :project_key
+                    """
+                ),
+                {"project_key": project_key},
+            )
+            .mappings()
+            .first()
+        )
+
+        return self._map_row(row) if row else None
+
+    def get_by_key_for_update(self, project_key: str) -> CodeProject | None:
+        row = (
+            self.session.execute(
+                text(
+                    f"""
+                    SELECT
+                        {PROJECT_SELECT_COLUMNS}
+                    FROM agent.code_projects
+                    WHERE project_key = :project_key
+                    FOR UPDATE
                     """
                 ),
                 {"project_key": project_key},
@@ -94,10 +114,10 @@ class CodeProjectRepository:
                         local_repository_path,
                         review_context_path,
                         consultation_context_path,
+                        default_max_files,
+                        default_max_file_bytes,
                         default_top_k,
-                        max_files,
-                        max_file_bytes,
-                        include_full_code_units
+                        default_include_full_code_units
                     )
                     VALUES (
                         :project_key,
@@ -107,10 +127,10 @@ class CodeProjectRepository:
                         :local_repository_path,
                         :review_context_path,
                         :consultation_context_path,
+                        :default_max_files,
+                        :default_max_file_bytes,
                         :default_top_k,
-                        :max_files,
-                        :max_file_bytes,
-                        :include_full_code_units
+                        :default_include_full_code_units
                     )
                     RETURNING
                         {PROJECT_SELECT_COLUMNS}
@@ -135,10 +155,10 @@ class CodeProjectRepository:
             "local_repository_path",
             "review_context_path",
             "consultation_context_path",
+            "default_max_files",
+            "default_max_file_bytes",
             "default_top_k",
-            "max_files",
-            "max_file_bytes",
-            "include_full_code_units",
+            "default_include_full_code_units",
         }
 
         update_data = {
@@ -179,6 +199,28 @@ class CodeProjectRepository:
 
         return self._map_row(row) if row else None
 
+    def set_current_index_if_empty(
+        self,
+        project_id: UUID,
+        index_id: UUID,
+    ) -> bool:
+        result = self.session.execute(
+            text(
+                """
+                UPDATE agent.code_projects
+                SET current_index_id = :index_id
+                WHERE id = :project_id
+                  AND current_index_id IS NULL
+                """
+            ),
+            {
+                "project_id": project_id,
+                "index_id": index_id,
+            },
+        )
+
+        return result.rowcount > 0
+
     def delete_by_key(self, project_key: str) -> bool:
         result = self.session.execute(
             text(
@@ -202,9 +244,9 @@ class CodeProjectRepository:
             local_repository_path=row["local_repository_path"],
             review_context_path=row["review_context_path"],
             consultation_context_path=row["consultation_context_path"],
+            default_max_files=row["default_max_files"],
+            default_max_file_bytes=row["default_max_file_bytes"],
             default_top_k=row["default_top_k"],
-            max_files=row["max_files"],
-            max_file_bytes=row["max_file_bytes"],
-            include_full_code_units=row["include_full_code_units"],
+            default_include_full_code_units=row["default_include_full_code_units"],
             current_index_id=row["current_index_id"],
         )

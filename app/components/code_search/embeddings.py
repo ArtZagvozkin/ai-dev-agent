@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import math
 import re
 from typing import Protocol
@@ -6,6 +7,8 @@ from typing import Protocol
 from fastapi import HTTPException
 from openai import OpenAI
 
+
+logger = logging.getLogger(__name__)
 
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_:\-]*")
 
@@ -52,7 +55,10 @@ class HashingEmbeddingClient:
 
         for feature in features:
             digest = hashlib.md5(feature.encode("utf-8")).digest()
-            slot = int.from_bytes(digest[:4], byteorder="little", signed=False) % self.dimensions
+            slot = (
+                int.from_bytes(digest[:4], byteorder="little", signed=False)
+                % self.dimensions
+            )
             sign = 1.0 if digest[4] % 2 == 0 else -1.0
             vector[slot] += sign
 
@@ -100,11 +106,40 @@ class OpenAIEmbeddingClient:
             return []
 
         vectors: list[list[float]] = []
+
         for start in range(0, len(texts), self.batch_size):
             batch = texts[start : start + self.batch_size]
-            vectors.extend(self._embed_batch(batch))
+            vectors.extend(self._embed_batch_with_fallback(batch))
 
         return vectors
+
+    def _embed_batch_with_fallback(self, texts: list[str]) -> list[list[float]]:
+        """
+        Embeds a batch and recursively splits it when provider/gateway returns
+        an invalid payload for a large batch.
+
+        This keeps quality the same, but avoids losing the whole index build
+        just because one large batch was rejected or returned empty data.
+        """
+        try:
+            return self._embed_batch(texts)
+        except HTTPException:
+            if len(texts) <= 1:
+                raise
+
+            middle = len(texts) // 2
+            logger.warning(
+                "Embedding batch failed; retrying with smaller batches: "
+                "model=%s, batch_size=%s, left=%s, right=%s",
+                self.model,
+                len(texts),
+                middle,
+                len(texts) - middle,
+            )
+            return [
+                *self._embed_batch_with_fallback(texts[:middle]),
+                *self._embed_batch_with_fallback(texts[middle:]),
+            ]
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Requests one provider batch and validates that the response contains embeddings."""
@@ -113,25 +148,36 @@ class OpenAIEmbeddingClient:
             "input": texts,
             "encoding_format": "float",
         }
+
         if self.dimensions is not None:
             payload["dimensions"] = self.dimensions
 
         try:
             response = self.client.embeddings.create(**payload)
         except Exception as error:
-            raise HTTPException(status_code=502, detail=f"Embedding request failed: {error}")
+            raise HTTPException(
+                status_code=502,
+                detail=f"Embedding request failed: {error}",
+            ) from error
 
         response_data = getattr(response, "data", None)
         if not response_data:
+            first_input_size = len(texts[0]) if texts else 0
             raise HTTPException(
                 status_code=502,
                 detail=(
                     "Embedding provider returned an empty 'data' payload. "
-                    f"Model={self.model}, batch_size={len(texts)}"
+                    f"Model={self.model}, batch_size={len(texts)}, "
+                    f"first_input_size={first_input_size}"
                 ),
             )
 
-        vectors = [list(item.embedding) for item in response_data if getattr(item, "embedding", None) is not None]
+        vectors = [
+            list(item.embedding)
+            for item in response_data
+            if getattr(item, "embedding", None) is not None
+        ]
+
         if len(vectors) != len(texts):
             raise HTTPException(
                 status_code=502,
@@ -144,16 +190,51 @@ class OpenAIEmbeddingClient:
         return vectors
 
 
-def build_embedding_client(settings) -> EmbeddingClient:
-    """Selects the embedding client implementation from application settings."""
-    provider = getattr(settings, "embedding_provider", "hashing").lower()
-    if provider in {"openai", "openai_compatible"}:
+def build_embedding_client_from_options(
+    provider: str,
+    model: str | None,
+    api_key: str | None,
+    base_url: str | None,
+    dimensions: int | None = None,
+    batch_size: int = 64,
+    allow_hashing: bool = True,
+) -> EmbeddingClient:
+    normalized_provider = provider.lower().strip()
+
+    if normalized_provider in {"openai", "openai_compatible"}:
+        if not model:
+            raise ValueError("Embedding model is required for remote embeddings")
+
+        if not api_key:
+            raise ValueError("Embedding API key is required for remote embeddings")
+
         return OpenAIEmbeddingClient(
-            model=settings.embedding_model,
-            api_key=settings.embedding_api_key,
-            base_url=settings.embedding_base_url,
-            dimensions=settings.embedding_dimensions,
-            batch_size=getattr(settings, "embedding_batch_size", 64),
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            dimensions=dimensions,
+            batch_size=batch_size,
         )
 
-    return HashingEmbeddingClient(dimensions=settings.embedding_dimensions or 256)
+    if normalized_provider == "hashing":
+        if not allow_hashing:
+            raise ValueError(
+                "Hashing embeddings are disabled for persistent codebase indexes"
+            )
+
+        return HashingEmbeddingClient(dimensions=dimensions or 256)
+
+    raise ValueError(f"Unsupported embedding provider: {provider}")
+
+
+def build_embedding_client(settings) -> EmbeddingClient:
+    """Selects the embedding client implementation from application settings."""
+    return build_embedding_client_from_options(
+        provider=getattr(settings, "embedding_provider", "hashing"),
+        model=getattr(settings, "embedding_model", None),
+        api_key=getattr(settings, "embedding_api_key", None),
+        base_url=getattr(settings, "embedding_base_url", None),
+        dimensions=getattr(settings, "embedding_dimensions", None),
+        batch_size=getattr(settings, "embedding_batch_size", 64),
+        allow_hashing=True,
+    )

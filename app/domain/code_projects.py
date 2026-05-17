@@ -15,9 +15,10 @@ class CodeProject:
     review_context_path: str | None
     consultation_context_path: str | None
 
+    default_max_files: int
+    default_max_file_bytes: int
+
     default_top_k: int
-    max_files: int
-    max_file_bytes: int
-    include_full_code_units: bool
+    default_include_full_code_units: bool
 
     current_index_id: UUID | None

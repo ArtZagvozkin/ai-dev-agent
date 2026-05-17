@@ -7,7 +7,10 @@ PROJECT_KEY_PATTERN = r"^[a-z0-9][a-z0-9_-]*$"
 
 
 class CodeProjectCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
 
     project_key: str = Field(
         min_length=1,
@@ -23,14 +26,18 @@ class CodeProjectCreateRequest(BaseModel):
     review_context_path: str | None = Field(default=None, max_length=1024)
     consultation_context_path: str | None = Field(default=None, max_length=1024)
 
+    default_max_files: int = Field(default=7000, ge=1, le=10000)
+    default_max_file_bytes: int = Field(default=200000, ge=1, le=5000000)
+
     default_top_k: int = Field(default=10, ge=1, le=20)
-    max_files: int = Field(default=7000, ge=1, le=10000)
-    max_file_bytes: int = Field(default=200000, ge=1, le=5000000)
-    include_full_code_units: bool = True
+    default_include_full_code_units: bool = True
 
 
 class CodeProjectUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
 
     display_name: str | None = Field(default=None, min_length=1, max_length=255)
 
@@ -41,10 +48,11 @@ class CodeProjectUpdateRequest(BaseModel):
     review_context_path: str | None = Field(default=None, max_length=1024)
     consultation_context_path: str | None = Field(default=None, max_length=1024)
 
+    default_max_files: int | None = Field(default=None, ge=1, le=10000)
+    default_max_file_bytes: int | None = Field(default=None, ge=1, le=5000000)
+
     default_top_k: int | None = Field(default=None, ge=1, le=20)
-    max_files: int | None = Field(default=None, ge=1, le=10000)
-    max_file_bytes: int | None = Field(default=None, ge=1, le=5000000)
-    include_full_code_units: bool | None = None
+    default_include_full_code_units: bool | None = None
 
 
 class CodeProjectResponse(BaseModel):
@@ -62,10 +70,11 @@ class CodeProjectResponse(BaseModel):
     review_context_path: str | None = None
     consultation_context_path: str | None = None
 
+    default_max_files: int
+    default_max_file_bytes: int
+
     default_top_k: int
-    max_files: int
-    max_file_bytes: int
-    include_full_code_units: bool
+    default_include_full_code_units: bool
 
     current_index_id: UUID | None = None
 
