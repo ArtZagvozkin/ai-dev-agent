@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,11 +21,24 @@ class CodebaseIndexBuildRequest(BaseModel):
     embedding_model: str | None = Field(default=None, min_length=1, max_length=255)
     embedding_dimensions: int | None = Field(default=None, ge=1, le=20000)
 
+    skip_failed_files: bool = False
+    max_failed_files: int = Field(default=100, ge=0, le=10000)
+
 
 class CodeProjectIndexSwitchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     index_id: UUID
+
+
+class CodebaseIndexSkippedFile(BaseModel):
+    path: str
+    stage: str
+    error: str
+    language: str | None = None
+    size_bytes: int | None = None
+    chunks_count: int | None = None
+    input_summary: dict[str, Any] = Field(default_factory=dict)
 
 
 class CodebaseIndexResponse(BaseModel):
@@ -53,6 +66,9 @@ class CodebaseIndexResponse(BaseModel):
     error_message: str | None = None
 
     is_current: bool = False
+
+    skipped_files_count: int = 0
+    skipped_files: list[CodebaseIndexSkippedFile] = Field(default_factory=list)
 
 
 class CodebaseIndexListResponse(BaseModel):

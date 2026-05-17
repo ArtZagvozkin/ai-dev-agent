@@ -22,6 +22,10 @@ from app.repositories.code_projects import CodeProjectRepository
 from app.repositories.codebase_files import CodebaseFileRepository
 from app.repositories.codebase_indexes import CodebaseIndexRepository
 from app.services.codebase.code_projects import CodeProjectService
+from app.services.codebase.codebase_consultation_index import (
+    PersistentCodebaseIndexCache,
+    PersistentCodebaseIndexLoader,
+)
 from app.services.codebase.codebase_index_build import CodebaseIndexBuildService
 from app.services.codebase.codebase_indexes import CodebaseIndexService
 
@@ -75,6 +79,8 @@ persistent_codebase_indexer = CodebaseIndexer(
     embedding_client=embedding_client,
 )
 
+persistent_codebase_index_cache = PersistentCodebaseIndexCache()
+
 code_review_workflow = CodeReviewWorkflow(
     llm=llm,
     context_builder=context_builder,
@@ -83,11 +89,9 @@ code_review_workflow = CodeReviewWorkflow(
     comment_publisher=review_comment_publisher,
 )
 
-codebase_consultation_workflow = CodebaseConsultationWorkflow(
-    llm=llm,
-    index_cache=codebase_index_cache,
-    agent_context_path=settings.agent_context_path,
-)
+
+def get_db_session() -> Generator[Session, None, None]:
+    yield from create_db_session()
 
 
 def get_app_settings() -> Settings:
@@ -118,12 +122,22 @@ def get_code_review_workflow() -> CodeReviewWorkflow:
     return code_review_workflow
 
 
-def get_codebase_consultation_workflow() -> CodebaseConsultationWorkflow:
-    return codebase_consultation_workflow
+def get_codebase_consultation_workflow(
+    session: Session = Depends(get_db_session),
+) -> CodebaseConsultationWorkflow:
+    persistent_index_loader = PersistentCodebaseIndexLoader(
+        settings=settings,
+        project_repository=CodeProjectRepository(session),
+        index_repository=CodebaseIndexRepository(session),
+        chunk_repository=CodeChunkRepository(session),
+        cache=persistent_codebase_index_cache,
+    )
 
-
-def get_db_session() -> Generator[Session, None, None]:
-    yield from create_db_session()
+    return CodebaseConsultationWorkflow(
+        llm=llm,
+        persistent_index_loader=persistent_index_loader,
+        agent_context_path=settings.agent_context_path,
+    )
 
 
 def get_code_project_repository(

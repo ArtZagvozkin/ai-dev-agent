@@ -89,11 +89,22 @@ class OpenAIEmbeddingClient:
         base_url: str | None = None,
         dimensions: int | None = None,
         batch_size: int = 64,
+        max_input_tokens: int = 7500,
+        fallback_max_input_chars: int = 20000,
     ):
-        """Configures an OpenAI-compatible embeddings client for remote vectorization."""
+        """
+        Configures an OpenAI-compatible embeddings client.
+
+        max_input_tokens intentionally stays below common 8192-token embedding
+        limits to leave room for tokenizer/model/provider differences.
+
+        fallback_max_input_chars is used when tiktoken is unavailable.
+        """
         self.model = model
         self.dimensions = dimensions
         self.batch_size = max(batch_size, 1)
+        self.max_input_tokens = max(max_input_tokens, 1)
+        self.fallback_max_input_chars = max(fallback_max_input_chars, 1000)
         self.client = OpenAI(api_key=api_key, base_url=base_url)
 
     def embed_text(self, text: str) -> list[float]:
@@ -105,21 +116,88 @@ class OpenAIEmbeddingClient:
         if not texts:
             return []
 
+        normalized_texts = [
+            self._normalize_embedding_input(text)
+            for text in texts
+        ]
+
         vectors: list[list[float]] = []
 
-        for start in range(0, len(texts), self.batch_size):
-            batch = texts[start : start + self.batch_size]
+        for start in range(0, len(normalized_texts), self.batch_size):
+            batch = normalized_texts[start : start + self.batch_size]
             vectors.extend(self._embed_batch_with_fallback(batch))
 
         return vectors
+
+    def _normalize_embedding_input(self, text: str) -> str:
+        """
+        Keeps embedding input inside a safe provider range.
+
+        Important:
+        - this does not mutate stored chunk content;
+        - Postgres still keeps full contextualized_text/content;
+        - only the remote embedding payload is shortened.
+        """
+        compact_text = text.strip()
+        if not compact_text:
+            return ""
+
+        token_limited = self._truncate_with_tiktoken(compact_text)
+        if token_limited is not None:
+            if len(token_limited) < len(compact_text):
+                logger.warning(
+                    "Embedding input was token-truncated: model=%s, original_chars=%s, truncated_chars=%s, max_tokens=%s",
+                    self.model,
+                    len(compact_text),
+                    len(token_limited),
+                    self.max_input_tokens,
+                )
+            return token_limited
+
+        if len(compact_text) > self.fallback_max_input_chars:
+            logger.warning(
+                "Embedding input was char-truncated because tiktoken is unavailable: "
+                "model=%s, original_chars=%s, truncated_chars=%s",
+                self.model,
+                len(compact_text),
+                self.fallback_max_input_chars,
+            )
+            return compact_text[: self.fallback_max_input_chars]
+
+        return compact_text
+
+    def _truncate_with_tiktoken(self, text: str) -> str | None:
+        """
+        Token-aware truncation when tiktoken is installed.
+
+        Returns None when tiktoken is unavailable, so the caller can use a
+        conservative char fallback without adding a hard dependency.
+        """
+        try:
+            import tiktoken
+        except ImportError:
+            return None
+
+        try:
+            encoding = tiktoken.encoding_for_model(self.model)
+        except Exception:
+            try:
+                encoding = tiktoken.get_encoding("cl100k_base")
+            except Exception:
+                return None
+
+        tokens = encoding.encode(text)
+        if len(tokens) <= self.max_input_tokens:
+            return text
+
+        return encoding.decode(tokens[: self.max_input_tokens])
 
     def _embed_batch_with_fallback(self, texts: list[str]) -> list[list[float]]:
         """
         Embeds a batch and recursively splits it when provider/gateway returns
         an invalid payload for a large batch.
 
-        This keeps quality the same, but avoids losing the whole index build
-        just because one large batch was rejected or returned empty data.
+        If a single item still fails, the error is raised with useful details.
         """
         try:
             return self._embed_batch(texts)

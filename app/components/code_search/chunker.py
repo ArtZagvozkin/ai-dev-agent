@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 # Tree-sitter language names used by tree-sitter-language-pack / tree-sitter-languages.
 # Keep common extensions explicit; unknown extensions still fall back to text/window chunking.
+# Временно откличил frotend-файлы. Построение индекса со всеми файлами сильно замедляет построение индекса.
 TREE_SITTER_LANGUAGE_MAP = {
     ".ada": "ada",
     ".adb": "ada",
@@ -29,7 +30,7 @@ TREE_SITTER_LANGUAGE_MAP = {
     ".hh": "cpp",
     ".hxx": "cpp",
     ".cs": "csharp",
-    ".css": "css",
+    # ".css": "css",
     ".csv": "csv",
     ".dart": "dart",
     ".dockerfile": "dockerfile",
@@ -45,13 +46,13 @@ TREE_SITTER_LANGUAGE_MAP = {
     ".graphql": "graphql",
     ".gql": "graphql",
     ".hs": "haskell",
-    ".html": "html",
-    ".htm": "html",
+    # ".html": "html",
+    # ".htm": "html",
     ".java": "java",
     ".js": "javascript",
-    ".mjs": "javascript",
-    ".cjs": "javascript",
-    ".jsx": "javascript",
+    # ".mjs": "javascript",
+    # ".cjs": "javascript",
+    # ".jsx": "javascript",
     ".json": "json",
     ".jsonc": "json",
     ".jl": "julia",

@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.code_projects import PROJECT_KEY_PATTERN
 from app.domain.reviews import ReviewIssue, ReviewScope
 
 
@@ -102,13 +103,18 @@ class MattermostPostResponse(BaseModel):
 
 
 class CodebaseConsultationRequest(BaseModel):
-    repository_path: str = Field(min_length=1)
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
+
+    # В API это называется project_id, но сейчас мапится на code_projects.project_key.
+    project_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=PROJECT_KEY_PATTERN,
+    )
     question: str = Field(min_length=1)
-    top_k: int = Field(default=10, ge=1, le=20)
-    max_files: int = Field(default=2_000, ge=1, le=10_000)
-    max_file_bytes: int = Field(default=200_000, ge=1, le=5_000_000)
-    force_reindex: bool = False
-    include_full_code_units: bool = True
 
 
 class CodebaseConsultationRetrievalSubquery(BaseModel):

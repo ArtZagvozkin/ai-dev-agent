@@ -2,6 +2,7 @@ import json
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 from app.components.code_search.models import CodeChunk
@@ -93,3 +94,97 @@ class CodeChunkRepository:
             chunk_ids.append(chunk_id)
 
         return chunk_ids
+
+    def list_by_index(
+        self,
+        index_id: UUID,
+    ) -> list[tuple[UUID, CodeChunk]]:
+        rows = self.session.execute(
+            text(
+                """
+                SELECT
+                    c.id AS db_id,
+                    c.chunk_id,
+                    c.parent_chunk_id,
+                    c.chunk_type,
+                    f.path,
+                    f.language,
+                    c.start_line,
+                    c.end_line,
+                    c.symbol,
+                    c.ast_node_type,
+                    c.declaration_type,
+                    c.parent_symbol,
+                    c.content,
+                    c.contextualized_text,
+                    c.code_unit,
+                    c.keywords,
+                    c.imports,
+                    c.referenced_symbols,
+                    c.top_level_symbols
+                FROM agent.code_chunks c
+                JOIN agent.codebase_files f ON f.id = c.file_id
+                WHERE f.index_id = :index_id
+                ORDER BY
+                    f.path,
+                    c.start_line,
+                    c.end_line,
+                    c.chunk_type,
+                    c.chunk_id
+                """
+            ),
+            {"index_id": index_id},
+        ).mappings()
+
+        return [
+            (
+                row["db_id"],
+                self._map_chunk_row(row),
+            )
+            for row in rows
+        ]
+
+    def _map_chunk_row(self, row: RowMapping) -> CodeChunk:
+        return CodeChunk(
+            chunk_id=row["chunk_id"],
+            parent_chunk_id=row["parent_chunk_id"],
+            chunk_type=row["chunk_type"],
+            path=row["path"],
+            language=row["language"],
+            start_line=row["start_line"],
+            end_line=row["end_line"],
+            content=row["content"],
+            contextualized_text=row["contextualized_text"],
+            symbol=row["symbol"],
+            ast_node_type=row["ast_node_type"],
+            declaration_type=row["declaration_type"],
+            parent_symbol=row["parent_symbol"],
+            keywords=self._json_list(row["keywords"]),
+            imports=self._json_list(row["imports"]),
+            references=self._json_list(row["referenced_symbols"]),
+            top_level_symbols=self._json_list(row["top_level_symbols"]),
+            code_unit=row["code_unit"],
+        )
+
+    def _json_list(self, value) -> list[str]:
+        if value is None:
+            return []
+
+        if isinstance(value, list):
+            return [str(item) for item in value if item is not None]
+
+        if isinstance(value, str):
+            try:
+                loaded = json.loads(value)
+            except json.JSONDecodeError:
+                return []
+
+            if isinstance(loaded, list):
+                return [str(item) for item in loaded if item is not None]
+
+            return []
+
+        try:
+            return [str(item) for item in value if item is not None]
+        except TypeError:
+            return []

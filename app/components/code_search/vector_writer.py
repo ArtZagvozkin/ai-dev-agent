@@ -94,6 +94,27 @@ class QdrantCodeChunkVectorWriter:
                 points=batch,
             )
 
+    def delete_vectors(
+        self,
+        chunk_ids: list[UUID],
+    ) -> None:
+        if not chunk_ids:
+            return
+
+        client = self._get_client()
+        models = self._get_models()
+
+        point_ids = [str(chunk_id) for chunk_id in chunk_ids]
+
+        for start in range(0, len(point_ids), QDRANT_UPSERT_BATCH_SIZE):
+            batch = point_ids[start : start + QDRANT_UPSERT_BATCH_SIZE]
+
+            client.delete(
+                collection_name=self.collection_name,
+                points_selector=models.PointIdsList(points=batch),
+                wait=True,
+            )
+
     def _get_client(self):
         if self._client is not None:
             return self._client

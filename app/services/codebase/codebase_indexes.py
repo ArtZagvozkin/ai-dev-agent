@@ -104,20 +104,30 @@ class CodebaseIndexService:
         }
 
     def _delete_qdrant_collection_best_effort(self, collection_name: str) -> None:
-        if self.settings.vector_store_provider != "qdrant":
+        qdrant_url = (self.settings.qdrant_url or "").strip()
+        qdrant_local_path = (self.settings.qdrant_local_path or "").strip()
+
+        if not qdrant_url and not qdrant_local_path:
             logger.warning(
-                "Skipping Qdrant collection cleanup because VECTOR_STORE_PROVIDER is not qdrant: "
-                "collection=%s, provider=%s",
+                "Skipping Qdrant collection cleanup because Qdrant is not configured: "
+                "collection=%s",
                 collection_name,
-                self.settings.vector_store_provider,
+            )
+            return
+
+        if qdrant_local_path == ":memory:":
+            logger.warning(
+                "Skipping Qdrant collection cleanup because in-memory Qdrant is not durable: "
+                "collection=%s",
+                collection_name,
             )
             return
 
         writer = QdrantCodeChunkVectorWriter(
             collection_name=collection_name,
-            url=self.settings.qdrant_url or None,
+            url=qdrant_url or None,
             api_key=self.settings.qdrant_api_key or None,
-            location=self.settings.qdrant_local_path or None,
+            location=qdrant_local_path or None,
             prefer_grpc=self.settings.qdrant_prefer_grpc,
         )
 

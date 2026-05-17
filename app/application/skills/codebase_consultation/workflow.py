@@ -11,7 +11,6 @@ from app.application.skills.codebase_consultation.schemas import (
     CodebaseConsultationLLMResponse,
     CodebaseConsultationQueryPlan as QueryPlanLLMResponse,
 )
-from app.components.code_search.indexer import CodebaseIndexCache
 from app.components.code_search.models import RetrievedChunk
 from app.components.llm.structured_client import StructuredLLMClient
 from app.schemas.api import CodebaseConsultationRequest
@@ -26,25 +25,28 @@ class CodebaseConsultationWorkflow:
     def __init__(
         self,
         llm: StructuredLLMClient,
-        index_cache: CodebaseIndexCache | None = None,
+        persistent_index_loader,
         agent_context_path: str = "info_cunsalt.md",
         retrieval_workers: int = 4,
     ):
         self.llm = llm
-        self.index_cache = index_cache or CodebaseIndexCache()
+        self.persistent_index_loader = persistent_index_loader
         self.agent_context_path = agent_context_path
         self.retrieval_workers = max(retrieval_workers, 1)
 
     def run(self, data: CodebaseConsultationRequest) -> dict:
-        repository_path = Path(data.repository_path).resolve()
+        bundle = self.persistent_index_loader.load(data.project_id)
+
+        project = bundle.project
+        index_record = bundle.index_record
+        index = bundle.index
+
+        repository_path = Path(project.local_repository_path).resolve()
+        context_path = bundle.context_path or self.agent_context_path
+
         project_context, project_context_path = self._load_project_context(
-            repository_path
-        )
-        index = self.index_cache.get_or_build(
-            repository_path=data.repository_path,
-            max_files=data.max_files,
-            max_file_bytes=data.max_file_bytes,
-            force_reindex=data.force_reindex,
+            repository_path=repository_path,
+            configured_context_path=context_path,
         )
 
         query_plan = self._build_query_plan(
@@ -52,39 +54,53 @@ class CodebaseConsultationWorkflow:
             question=data.question,
             project_context=project_context,
             project_context_path=project_context_path,
-            final_top_k=data.top_k,
+            final_top_k=bundle.top_k,
+            configured_context_path=context_path,
         )
-        retrieved_chunks = self._retrieve_chunks(index, query_plan, data.top_k)
+
+        retrieved_chunks = self._retrieve_chunks(index, query_plan, bundle.top_k)
+
         user_message = self._build_user_message(
             repository_path=repository_path,
             question=data.question,
             query_plan=query_plan,
             retrieved_chunks=retrieved_chunks,
-            include_full_code_units=data.include_full_code_units,
+            include_full_code_units=bundle.include_full_code_units,
         )
 
         logger.info(
-            "Codebase consultation final prompt prepared: repository_path=%s, question=%s, prompt_size=%s\n"
+            "Codebase consultation final prompt prepared: "
+            "project_id=%s, index_id=%s, repository_path=%s, question=%s, prompt_size=%s\n"
             "FINAL SYSTEM PROMPT:\n%s\n\nFINAL USER PROMPT:\n%s",
+            data.project_id,
+            index_record.id,
             repository_path,
             data.question,
             len(user_message),
             ANSWER_SYSTEM_PROMPT,
             user_message,
         )
+
         llm_result = self.llm.response(
             system_prompt=ANSWER_SYSTEM_PROMPT,
             user_message=user_message,
             response_model=CodebaseConsultationLLMResponse,
         )
+
         logger.info(
-            "Codebase consultation final LLM response received: repository_path=%s, question=%s, llm_result=%s",
-            repository_path,
+            "Codebase consultation final LLM response received: "
+            "project_id=%s, index_id=%s, question=%s, llm_result=%s",
+            data.project_id,
+            index_record.id,
             data.question,
             llm_result,
         )
 
-        sources = self._resolve_sources(retrieved_chunks, llm_result.get("citations", []))
+        sources = self._resolve_sources(
+            retrieved_chunks,
+            llm_result.get("citations", []),
+        )
+
         return {
             "answer": llm_result["answer"],
             "query_plan": query_plan,
@@ -96,8 +112,13 @@ class CodebaseConsultationWorkflow:
             "index_stats": index.stats_payload(),
         }
 
-    def _load_project_context(self, repository_path: Path) -> tuple[str, str | None]:
-        configured_path = Path(self.agent_context_path)
+    def _load_project_context(
+        self,
+        repository_path: Path,
+        configured_context_path: str | None,
+    ) -> tuple[str, str | None]:
+        configured_path = Path(configured_context_path or self.agent_context_path)
+
         candidates = (
             [configured_path]
             if configured_path.is_absolute()
@@ -126,13 +147,16 @@ class CodebaseConsultationWorkflow:
         project_context: str,
         project_context_path: str | None,
         final_top_k: int,
+        configured_context_path: str | None,
     ) -> dict:
         fallback = self._fallback_query_plan(
             question=question,
             project_context_path=project_context_path,
             project_context_loaded=bool(project_context),
             final_top_k=final_top_k,
+            configured_context_path=configured_context_path,
         )
+
         if not project_context:
             return fallback
 
@@ -140,7 +164,7 @@ class CodebaseConsultationWorkflow:
             planner_result = self.llm.response(
                 system_prompt=QUERY_PLANNER_SYSTEM_PROMPT,
                 user_message=(
-                    f"CONFIGURED PROJECT CONTEXT PATH:\n{self.agent_context_path}\n\n"
+                    f"CONFIGURED PROJECT CONTEXT PATH:\n{configured_context_path or self.agent_context_path}\n\n"
                     f"PROJECT CONTEXT PATH:\n{project_context_path or 'None'}\n\n"
                     f"PROJECT CONTEXT:\n{project_context}\n\n"
                     f"REPOSITORY PATH:\n{repository_path}\n\n"
@@ -149,7 +173,8 @@ class CodebaseConsultationWorkflow:
                 response_model=QueryPlanLLMResponse,
             )
             logger.info(
-                "Codebase consultation planner response received: repository_path=%s, question=%s, planner_result=%s",
+                "Codebase consultation planner response received: "
+                "repository_path=%s, question=%s, planner_result=%s",
                 repository_path,
                 question,
                 planner_result,
@@ -224,10 +249,11 @@ class CodebaseConsultationWorkflow:
         project_context_path: str | None,
         project_context_loaded: bool,
         final_top_k: int,
+        configured_context_path: str | None,
     ) -> dict:
         return {
             "project_context_path": project_context_path,
-            "configured_project_context_path": self.agent_context_path,
+            "configured_project_context_path": configured_context_path or self.agent_context_path,
             "project_context_loaded": project_context_loaded,
             "original_question": question,
             "intent": "",
@@ -243,10 +269,16 @@ class CodebaseConsultationWorkflow:
         }
 
     def _retrieve_chunks(
-        self, index, query_plan: dict, top_k: int
+        self,
+        index,
+        query_plan: dict,
+        top_k: int,
     ) -> list[RetrievedChunk]:
         if not query_plan["subqueries"]:
-            return index.search(query=query_plan["original_question"], top_k=top_k)
+            return index.search(
+                query=query_plan["original_question"],
+                top_k=top_k,
+            )
 
         search_specs = [
             {
@@ -260,7 +292,9 @@ class CodebaseConsultationWorkflow:
             },
             *query_plan["subqueries"],
         ]
+
         query_results = self._search_subqueries(index, search_specs)
+
         return self._merge_query_results(
             query_results=query_results,
             top_k=top_k,
@@ -271,7 +305,9 @@ class CodebaseConsultationWorkflow:
         )
 
     def _search_subqueries(
-        self, index, subqueries: list[dict]
+        self,
+        index,
+        subqueries: list[dict],
     ) -> list[tuple[dict, list[RetrievedChunk]]]:
         results_by_index = {}
         max_workers = min(self.retrieval_workers, len(subqueries))
@@ -287,6 +323,7 @@ class CodebaseConsultationWorkflow:
                 ): index_number
                 for index_number, subquery in enumerate(subqueries)
             }
+
             for future, index_number in futures.items():
                 results_by_index[index_number] = future.result()
 
@@ -305,12 +342,14 @@ class CodebaseConsultationWorkflow:
         keywords: list[str],
     ) -> list[RetrievedChunk]:
         merged = {}
+
         for subquery, chunks in query_results:
             hints = {
                 "path_hints": [*path_hints, *subquery["path_hints"]],
                 "extensions": [*extensions, *subquery["extensions"]],
                 "keywords": [*keywords, *subquery["keywords"]],
             }
+
             for rank, chunk in enumerate(chunks, start=1):
                 entry = merged.setdefault(
                     chunk.cache_key(),
@@ -331,6 +370,7 @@ class CodebaseConsultationWorkflow:
                 )
 
         chunks = []
+
         for entry in merged.values():
             combined_score = entry["rrf"] + entry["boost"]
             chunks.append(
@@ -352,6 +392,7 @@ class CodebaseConsultationWorkflow:
             ),
             reverse=True,
         )
+
         return chunks[:top_k]
 
     def _metadata_boost(
@@ -374,12 +415,17 @@ class CodebaseConsultationWorkflow:
         ).lower()
 
         boost = 0.02 if chunk.chunk_type in preferred_chunk_types else 0.0
-        boost += 0.03 if any(hint.lower().strip("/") in path for hint in path_hints) else 0.0
+        boost += (
+            0.03
+            if any(hint.lower().strip("/") in path for hint in path_hints)
+            else 0.0
+        )
         boost += 0.02 if Path(chunk.path).suffix.lower() in extensions else 0.0
         boost += min(
             sum(1 for keyword in keywords if keyword.lower().strip() in text) * 0.01,
             0.05,
         )
+
         return boost
 
     def _build_user_message(
@@ -407,6 +453,7 @@ class CodebaseConsultationWorkflow:
         retrieval_queries = "\n".join(
             f"- {query}" for query in query_plan["retrieval_queries"]
         )
+
         return (
             f"Intent: {query_plan['intent'] or 'n/a'}\n"
             f"Final Top K: {query_plan['final_top_k']}\n"
@@ -419,12 +466,15 @@ class CodebaseConsultationWorkflow:
         )
 
     def _format_sources(
-        self, chunks: list[RetrievedChunk], include_full_code_units: bool
+        self,
+        chunks: list[RetrievedChunk],
+        include_full_code_units: bool,
     ) -> str:
         if not chunks:
             return "No relevant sources were found."
 
         sections = []
+
         for index, chunk in enumerate(chunks, start=1):
             _, code = self._code_payload(chunk, include_full_code_units)
             sections.append(
@@ -436,19 +486,26 @@ class CodebaseConsultationWorkflow:
                 f"Imports: {self._compact(chunk.imports)}\n"
                 f"Code:\n{code}"
             )
+
         return "\n\n".join(sections)
 
     def _resolve_sources(
-        self, retrieved_chunks: list[RetrievedChunk], citations: list[int]
+        self,
+        retrieved_chunks: list[RetrievedChunk],
+        citations: list[int],
     ) -> list[RetrievedChunk]:
         selected = []
         seen = set()
+
         for citation in citations:
             index = citation - 1
+
             if index < 0 or index >= len(retrieved_chunks):
                 continue
+
             chunk = retrieved_chunks[index]
             key = (chunk.path, chunk.start_line, chunk.end_line)
+
             if key not in seen:
                 seen.add(key)
                 selected.append(chunk)
@@ -456,7 +513,9 @@ class CodebaseConsultationWorkflow:
         return selected or retrieved_chunks[: min(3, len(retrieved_chunks))]
 
     def _chunk_payload(
-        self, chunk: RetrievedChunk, include_scores: bool = False
+        self,
+        chunk: RetrievedChunk,
+        include_scores: bool = False,
     ) -> dict:
         payload = {
             "chunk_id": chunk.chunk_id,
@@ -480,6 +539,7 @@ class CodebaseConsultationWorkflow:
             "code_unit": chunk.content if chunk.is_full_code_unit() else None,
             "is_full_code_unit": chunk.is_full_code_unit(),
         }
+
         if include_scores:
             payload.update(
                 {
@@ -488,21 +548,27 @@ class CodebaseConsultationWorkflow:
                     "combined_score": round(chunk.combined_score, 6),
                 }
             )
+
         return payload
 
     def _code_payload(
-        self, chunk: RetrievedChunk, include_full_code_units: bool
+        self,
+        chunk: RetrievedChunk,
+        include_full_code_units: bool,
     ) -> tuple[str, str]:
         if include_full_code_units and chunk.is_full_code_unit():
             return "Code Unit", chunk.content
+
         return "Snippet", chunk.content
 
     def _normalize_subqueries(self, values: list[dict]) -> list[dict]:
         subqueries = []
         seen_ids = set()
+
         for index, value in enumerate(values, start=1):
             vector_query = self._clean(value.get("vector_query", ""))
             bm25_query = self._clean(value.get("bm25_query", ""))
+
             if not vector_query and not bm25_query:
                 continue
 
@@ -518,15 +584,19 @@ class CodebaseConsultationWorkflow:
                     "top_k": self._top_k(value.get("top_k", DEFAULT_SUBQUERY_TOP_K)),
                 }
             )
+
             if len(subqueries) >= MAX_SUBQUERIES:
                 break
+
         return subqueries
 
     def _subquery_id(self, value: str, index: int, seen_ids: set[str]) -> str:
         base = "_".join(self._clean(value or f"subquery_{index}").lower().split())[:64]
         subquery_id = base or f"subquery_{index}"
+
         while subquery_id in seen_ids:
             subquery_id = f"{base}_{index}"
+
         seen_ids.add(subquery_id)
         return subquery_id
 
@@ -539,15 +609,20 @@ class CodebaseConsultationWorkflow:
     def _strings(self, values: list[str], limit: int) -> list[str]:
         result = []
         seen = set()
+
         for value in values:
             cleaned = self._clean(value)
             lowered = cleaned.lower()
+
             if not cleaned or lowered in seen:
                 continue
+
             seen.add(lowered)
             result.append(cleaned)
+
             if len(result) >= limit:
                 break
+
         return result
 
     def _paths(self, values: list[str]) -> list[str]:
@@ -555,11 +630,13 @@ class CodebaseConsultationWorkflow:
 
     def _extensions(self, values: list[str]) -> list[str]:
         extensions = []
+
         for value in self._strings(values, limit=10):
             normalized = value.lower()
             extensions.append(
                 normalized if normalized.startswith(".") else f".{normalized}"
             )
+
         return extensions
 
     def _clean(self, value: str) -> str:
@@ -571,6 +648,7 @@ class CodebaseConsultationWorkflow:
     def _compact(self, values: list[str] | None, limit: int = 8) -> str:
         if not values:
             return "None"
+
         suffix = f", ... (+{len(values) - limit})" if len(values) > limit else ""
         return ", ".join(values[:limit]) + suffix
 
