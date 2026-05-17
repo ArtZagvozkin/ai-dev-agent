@@ -37,6 +37,7 @@ class BuildProjectOptions:
     project: CodeProject
     max_files: int
     max_file_bytes: int
+    initial_current_index_id: UUID | None
 
 
 class CodebaseIndexBuildService:
@@ -71,7 +72,7 @@ class CodebaseIndexBuildService:
             project_key=project_key,
             data=data,
             require_current_index=True,
-            attach_mode="overwrite",
+            attach_mode="overwrite_if_current_unchanged",
         )
 
     def _build_persistent_index(
@@ -89,6 +90,10 @@ class CodebaseIndexBuildService:
           1. chunks are persisted in Postgres;
           2. vectors are persisted in Qdrant;
           3. codebase_indexes.status is switched to 'ready'.
+
+        Rebuild safety rule:
+        - rebuild can replace current_index_id only if current_index_id was not
+          changed while the long build was running.
         """
         self._ensure_qdrant_provider()
 
@@ -240,10 +245,20 @@ class CodebaseIndexBuildService:
                     project_id=project.id,
                     index_id=index.id,
                 )
-            elif attach_mode == "overwrite":
-                current_set = self.project_repository.set_current_index(
+            elif attach_mode == "overwrite_if_current_unchanged":
+                if options.initial_current_index_id is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            "Code project has no current index at rebuild attach stage: "
+                            f"{project_key}"
+                        ),
+                    )
+
+                current_set = self.project_repository.set_current_index_if_matches(
                     project_id=project.id,
-                    index_id=index.id,
+                    expected_current_index_id=options.initial_current_index_id,
+                    new_index_id=index.id,
                 )
             else:
                 raise RuntimeError(f"Unsupported index attach mode: {attach_mode}")
@@ -265,6 +280,12 @@ class CodebaseIndexBuildService:
         except Exception as exc:
             self.session.rollback()
             self._mark_failed_best_effort(index_id=index.id if index else None, error=exc)
+
+            if index is not None:
+                self._delete_qdrant_collection_best_effort(
+                    collection_name=index.qdrant_collection_name,
+                )
+
             raise
 
     def _precheck_project_for_build(
@@ -347,6 +368,7 @@ class CodebaseIndexBuildService:
             project=project,
             max_files=data.max_files or project.default_max_files,
             max_file_bytes=data.max_file_bytes or project.default_max_file_bytes,
+            initial_current_index_id=project.current_index_id,
         )
 
     def _ensure_qdrant_provider(self) -> None:
@@ -360,8 +382,20 @@ class CodebaseIndexBuildService:
         self,
         data: CodebaseIndexBuildRequest,
     ) -> BuildEmbeddingConfig:
-        provider = (data.embedding_provider or self.settings.embedding_provider).lower().strip()
-        model = (data.embedding_model or self.settings.embedding_model).strip()
+        provider_source = (
+            data.embedding_provider
+            if data.embedding_provider is not None
+            else self.settings.embedding_provider
+        )
+        model_source = (
+            data.embedding_model
+            if data.embedding_model is not None
+            else self.settings.embedding_model
+        )
+
+        provider = (provider_source or "").lower().strip()
+        model = (model_source or "").strip()
+
         dimensions = (
             data.embedding_dimensions
             if data.embedding_dimensions is not None
@@ -374,7 +408,7 @@ class CodebaseIndexBuildService:
                 detail="embedding_provider is required",
             )
 
-        if not model:
+        if provider in {"openai", "openai_compatible"} and not model:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="embedding_model is required",
@@ -492,3 +526,14 @@ class CodebaseIndexBuildService:
                 index_id,
             )
             self.session.rollback()
+
+    def _delete_qdrant_collection_best_effort(self, collection_name: str) -> None:
+        try:
+            writer = self._build_vector_writer(collection_name)
+            writer.delete_collection()
+        except Exception:
+            logger.exception(
+                "Failed to delete Qdrant collection after failed codebase index build: "
+                "collection=%s",
+                collection_name,
+            )

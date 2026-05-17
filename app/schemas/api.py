@@ -101,18 +101,6 @@ class MattermostPostResponse(BaseModel):
     create_at: int | None = None
 
 
-class CodebaseIndexRebuildRequest(BaseModel):
-    repository_path: str = Field(min_length=1)
-    max_files: int = Field(default=2_000, ge=1, le=10_000)
-    max_file_bytes: int = Field(default=200_000, ge=1, le=5_000_000)
-
-
-class CodebaseIndexRebuildResponse(BaseModel):
-    repository_path: str
-    files_indexed: int
-    chunks_indexed: int
-
-
 class CodebaseConsultationRequest(BaseModel):
     repository_path: str = Field(min_length=1)
     question: str = Field(min_length=1)

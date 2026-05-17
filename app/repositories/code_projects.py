@@ -221,6 +221,30 @@ class CodeProjectRepository:
 
         return result.rowcount > 0
 
+    def set_current_index_if_matches(
+        self,
+        project_id: UUID,
+        expected_current_index_id: UUID,
+        new_index_id: UUID,
+    ) -> bool:
+        result = self.session.execute(
+            text(
+                """
+                UPDATE agent.code_projects
+                SET current_index_id = :new_index_id
+                WHERE id = :project_id
+                  AND current_index_id = :expected_current_index_id
+                """
+            ),
+            {
+                "project_id": project_id,
+                "expected_current_index_id": expected_current_index_id,
+                "new_index_id": new_index_id,
+            },
+        )
+
+        return result.rowcount > 0
+
     def set_current_index(
         self,
         project_id: UUID,
