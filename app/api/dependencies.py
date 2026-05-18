@@ -1,8 +1,12 @@
+import logging
 from collections.abc import Generator
 
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
+from app.application.bots.codebase_consultation_mattermost import (
+    MattermostCodebaseConsultationBot,
+)
 from app.application.skills.code_review.context_builder import ContextBuilder
 from app.application.skills.code_review.workflow import CodeReviewWorkflow
 from app.application.skills.codebase_consultation.workflow import CodebaseConsultationWorkflow
@@ -13,10 +17,11 @@ from app.components.diff.localizer import DiffLineLocalizer
 from app.components.llm.structured_client import StructuredLLMClient
 from app.components.review.comment_publisher import ReviewCommentPublisher
 from app.core.config import Settings, get_settings
-from app.database.session import create_db_session
+from app.database.session import create_db_session, get_session_factory
 from app.infrastructure.gitlab.client import GitLabClient
 from app.infrastructure.jira.client import JiraClient
 from app.infrastructure.mattermost.client import MattermostClient
+from app.infrastructure.mattermost.websocket_bot import MattermostWebSocketBotRunner
 from app.repositories.code_chunks import CodeChunkRepository
 from app.repositories.code_projects import CodeProjectRepository
 from app.repositories.codebase_files import CodebaseFileRepository
@@ -29,6 +34,8 @@ from app.services.codebase.codebase_consultation_index import (
 from app.services.codebase.codebase_index_build import CodebaseIndexBuildService
 from app.services.codebase.codebase_indexes import CodebaseIndexService
 
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -89,6 +96,8 @@ code_review_workflow = CodeReviewWorkflow(
     comment_publisher=review_comment_publisher,
 )
 
+mattermost_bot_runners: list[MattermostWebSocketBotRunner] = []
+
 
 def get_db_session() -> Generator[Session, None, None]:
     yield from create_db_session()
@@ -122,8 +131,8 @@ def get_code_review_workflow() -> CodeReviewWorkflow:
     return code_review_workflow
 
 
-def get_codebase_consultation_workflow(
-    session: Session = Depends(get_db_session),
+def build_codebase_consultation_workflow_for_session(
+    session: Session,
 ) -> CodebaseConsultationWorkflow:
     persistent_index_loader = PersistentCodebaseIndexLoader(
         settings=settings,
@@ -137,7 +146,14 @@ def get_codebase_consultation_workflow(
         llm=llm,
         persistent_index_loader=persistent_index_loader,
         agent_context_path=settings.agent_context_path,
+        gitlab_base_url=settings.gitlab_url,
     )
+
+
+def get_codebase_consultation_workflow(
+    session: Session = Depends(get_db_session),
+) -> CodebaseConsultationWorkflow:
+    return build_codebase_consultation_workflow_for_session(session)
 
 
 def get_code_project_repository(
@@ -178,3 +194,61 @@ def get_codebase_index_build_service(
         chunk_repository=CodeChunkRepository(session),
         indexer=persistent_codebase_indexer,
     )
+
+
+def start_mattermost_bots() -> None:
+    if not settings.mattermost_pf_scout_enabled:
+        logger.info("Mattermost pf_scout bot is disabled")
+        return
+
+    if mattermost_bot_runners:
+        logger.warning("Mattermost bot runners are already started")
+        return
+
+    try:
+        session_factory = get_session_factory()
+
+        pf_scout_client = MattermostClient(
+            base_url=settings.mattermost_url,
+            token=settings.mattermost_pf_scout_bot_token,
+        )
+
+        pf_scout_bot = MattermostCodebaseConsultationBot(
+            mattermost=pf_scout_client,
+            project_key=settings.mattermost_pf_scout_project_key,
+            session_factory=session_factory,
+            workflow_factory=build_codebase_consultation_workflow_for_session,
+            max_post_chars=settings.mattermost_bot_max_post_chars,
+        )
+
+        pf_scout_runner = MattermostWebSocketBotRunner(
+            name="pf_scout",
+            client=pf_scout_client,
+            on_direct_message=pf_scout_bot.handle_direct_message,
+            reconnect_seconds=settings.mattermost_bot_reconnect_seconds,
+            worker_count=settings.mattermost_bot_worker_count,
+        )
+
+        pf_scout_runner.start()
+        mattermost_bot_runners.append(pf_scout_runner)
+
+        logger.info(
+            "Mattermost pf_scout bot started: project_key=%s",
+            settings.mattermost_pf_scout_project_key,
+        )
+
+    except Exception:
+        logger.exception("Failed to start Mattermost pf_scout bot")
+
+
+def stop_mattermost_bots() -> None:
+    while mattermost_bot_runners:
+        runner = mattermost_bot_runners.pop()
+
+        try:
+            runner.stop()
+        except Exception:
+            logger.exception(
+                "Failed to stop Mattermost bot runner: name=%s",
+                runner.name,
+            )

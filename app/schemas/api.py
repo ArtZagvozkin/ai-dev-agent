@@ -152,6 +152,7 @@ class CodebaseConsultationSource(BaseModel):
     language: str
     start_line: int
     end_line: int
+    gitlab_url: str | None = None
     symbol: str | None = None
     ast_node_type: str | None = None
     declaration_type: str | None = None

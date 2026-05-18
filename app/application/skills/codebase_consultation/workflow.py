@@ -2,6 +2,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from urllib.parse import quote
 
 from app.application.skills.codebase_consultation.prompts import (
     ANSWER_SYSTEM_PROMPT,
@@ -12,7 +13,6 @@ from app.application.skills.codebase_consultation.schemas import (
     CodebaseConsultationQueryPlan as QueryPlanLLMResponse,
 )
 from app.components.code_search.models import RetrievedChunk
-from app.components.llm.structured_client import StructuredLLMClient
 from app.schemas.api import CodebaseConsultationRequest
 
 logger = logging.getLogger(__name__)
@@ -24,15 +24,17 @@ MAX_SUBQUERIES = 4
 class CodebaseConsultationWorkflow:
     def __init__(
         self,
-        llm: StructuredLLMClient,
+        llm,
         persistent_index_loader,
         agent_context_path: str = "info_cunsalt.md",
         retrieval_workers: int = 4,
+        gitlab_base_url: str | None = None,
     ):
         self.llm = llm
         self.persistent_index_loader = persistent_index_loader
         self.agent_context_path = agent_context_path
         self.retrieval_workers = max(retrieval_workers, 1)
+        self.gitlab_base_url = (gitlab_base_url or "").rstrip("/")
 
     def run(self, data: CodebaseConsultationRequest) -> dict:
         bundle = self.persistent_index_loader.load(data.project_id)
@@ -96,17 +98,24 @@ class CodebaseConsultationWorkflow:
             llm_result,
         )
 
-        sources = self._resolve_sources(
-            retrieved_chunks,
-            llm_result.get("citations", []),
-        )
+        sources = retrieved_chunks
 
         return {
             "answer": llm_result["answer"],
             "query_plan": query_plan,
-            "sources": [self._chunk_payload(chunk) for chunk in sources],
+            "sources": [
+                self._chunk_payload(
+                    chunk,
+                    project=project,
+                )
+                for chunk in sources
+            ],
             "retrieved_chunks": [
-                self._chunk_payload(chunk, include_scores=True)
+                self._chunk_payload(
+                    chunk,
+                    project=project,
+                    include_scores=True,
+                )
                 for chunk in retrieved_chunks
             ],
             "index_stats": index.stats_payload(),
@@ -515,6 +524,7 @@ class CodebaseConsultationWorkflow:
     def _chunk_payload(
         self,
         chunk: RetrievedChunk,
+        project,
         include_scores: bool = False,
     ) -> dict:
         payload = {
@@ -525,6 +535,12 @@ class CodebaseConsultationWorkflow:
             "language": chunk.language,
             "start_line": chunk.start_line,
             "end_line": chunk.end_line,
+            "gitlab_url": self._build_gitlab_source_url(
+                project=project,
+                path=chunk.path,
+                start_line=chunk.start_line,
+                end_line=chunk.end_line,
+            ),
             "symbol": chunk.symbol,
             "ast_node_type": chunk.ast_node_type,
             "declaration_type": chunk.declaration_type,
@@ -550,6 +566,49 @@ class CodebaseConsultationWorkflow:
             )
 
         return payload
+
+    def _build_gitlab_source_url(
+        self,
+        project,
+        path: str,
+        start_line: int,
+        end_line: int,
+    ) -> str | None:
+        project_url = self._build_gitlab_project_url(project)
+        if not project_url:
+            return None
+
+        branch = quote(str(project.default_branch or "master"), safe="")
+        file_path = quote(path.lstrip("/"), safe="/")
+        line_anchor = self._line_anchor(start_line, end_line)
+
+        return f"{project_url}/-/blob/{branch}/{file_path}{line_anchor}"
+
+    def _build_gitlab_project_url(self, project) -> str | None:
+        gitlab_project = (project.gitlab_project or "").strip()
+        if not gitlab_project:
+            return None
+
+        if gitlab_project.startswith(("http://", "https://")):
+            return gitlab_project.removesuffix(".git").rstrip("/")
+
+        if not self.gitlab_base_url:
+            return None
+
+        normalized_project = gitlab_project.removesuffix(".git").strip("/")
+        if not normalized_project:
+            return None
+
+        return f"{self.gitlab_base_url}/{quote(normalized_project, safe='/')}"
+
+    def _line_anchor(self, start_line: int, end_line: int) -> str:
+        if start_line <= 0:
+            return ""
+
+        if end_line <= 0 or end_line == start_line:
+            return f"#L{start_line}"
+
+        return f"#L{start_line}-{end_line}"
 
     def _code_payload(
         self,

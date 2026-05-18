@@ -18,17 +18,24 @@ class MattermostClient:
             "Content-Type": "application/json",
         }
 
-    def _post(self, path: str, json: dict | None = None) -> dict:
-        logger.debug("Mattermost POST request: path=%s", path)
+    def _request(
+        self,
+        method: str,
+        path: str,
+        json: dict | None = None,
+        timeout: tuple[int, int] = (10, 60),
+    ) -> dict:
+        logger.debug("Mattermost %s request: path=%s", method.upper(), path)
 
         url = f"{self.base_url}/api/v4{path}"
 
         try:
-            response = requests.post(
-                url,
+            response = requests.request(
+                method=method,
+                url=url,
                 headers=self._headers(),
                 json=json,
-                timeout=(10, 60),
+                timeout=timeout,
             )
         except requests.RequestException as e:
             raise HTTPException(status_code=502, detail=f"Mattermost request failed: {e}")
@@ -36,13 +43,13 @@ class MattermostClient:
         if response.status_code == 401:
             raise HTTPException(
                 status_code=401,
-                detail="Mattermost authentication failed. Check MATTERMOST_BOT_TOKEN",
+                detail="Mattermost authentication failed. Check Mattermost bot token",
             )
 
         if response.status_code == 403:
             raise HTTPException(
                 status_code=403,
-                detail="Mattermost access denied. Check that bot can post to this channel",
+                detail="Mattermost access denied. Check bot permissions",
             )
 
         if response.status_code == 404:
@@ -57,13 +64,35 @@ class MattermostClient:
                 detail=f"Mattermost API error: {response.status_code} {response.text}",
             )
 
+        if not response.text:
+            return {}
+
         return response.json()
 
-    def create_post(self, channel_id: str, message: str) -> dict:
+    def _get(self, path: str) -> dict:
+        return self._request("GET", path)
+
+    def _post(self, path: str, json: dict | None = None) -> dict:
+        return self._request("POST", path, json=json)
+
+    def get_me(self) -> dict:
+        return self._get("/users/me")
+
+    def create_post(
+        self,
+        channel_id: str,
+        message: str,
+        root_id: str | None = None,
+    ) -> dict:
+        payload = {
+            "channel_id": channel_id,
+            "message": message,
+        }
+
+        if root_id:
+            payload["root_id"] = root_id
+
         return self._post(
             "/posts",
-            json={
-                "channel_id": channel_id,
-                "message": message,
-            },
+            json=payload,
         )

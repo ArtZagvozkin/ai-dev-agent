@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app.core.config import get_settings
@@ -12,6 +14,7 @@ setup_logging(
     log_backup_days=settings.log_backup_days,
 )
 
+from app.api.dependencies import start_mattermost_bots, stop_mattermost_bots  # noqa: E402
 from app.api.routes import health  # noqa: E402
 from app.api.routes.diagnostics import gitlab as diagnostics_gitlab  # noqa: E402
 from app.api.routes.diagnostics import jira as diagnostics_jira  # noqa: E402
@@ -23,7 +26,17 @@ from app.api.routes.manual import code_review as manual_code_review  # noqa: E40
 from app.api.routes.manual import codebase_consultation as manual_codebase_consultation  # noqa: E402
 
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_mattermost_bots()
+
+    try:
+        yield
+    finally:
+        stop_mattermost_bots()
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(RequestLoggingMiddleware)
 

@@ -25,6 +25,29 @@ class Settings:
         self.mattermost_url = self._get_required_env("MATTERMOST_URL")
         self.mattermost_bot_token = self._get_required_env("MATTERMOST_BOT_TOKEN")
 
+        self.mattermost_pf_scout_enabled = self._env_bool(
+            "MATTERMOST_PF_SCOUT_ENABLED",
+            default=False,
+        )
+        self.mattermost_pf_scout_bot_token = os.getenv(
+            "MATTERMOST_PF_SCOUT_BOT_TOKEN",
+            self.mattermost_bot_token,
+        ).strip()
+        self.mattermost_pf_scout_project_key = os.getenv(
+            "MATTERMOST_PF_SCOUT_PROJECT_KEY",
+            "packetfence",
+        ).strip()
+
+        self.mattermost_bot_reconnect_seconds = int(
+            os.getenv("MATTERMOST_BOT_RECONNECT_SECONDS", "5")
+        )
+        self.mattermost_bot_worker_count = int(
+            os.getenv("MATTERMOST_BOT_WORKER_COUNT", "2")
+        )
+        self.mattermost_bot_max_post_chars = int(
+            os.getenv("MATTERMOST_BOT_MAX_POST_CHARS", "12000")
+        )
+
         self.agent_context_path = os.getenv("AGENT_CONTEXT_PATH", "AGENT.md")
 
         self.database_url = os.getenv("DATABASE_URL", "").strip()
@@ -53,6 +76,7 @@ class Settings:
         self.log_backup_days = int(os.getenv("LOG_BACKUP_DAYS", "30"))
 
         self._validate_log_level()
+        self._validate_mattermost_bots()
 
     def _get_required_env(self, name: str) -> str:
         value = os.getenv(name)
@@ -61,6 +85,14 @@ class Settings:
             raise RuntimeError(f"Environment variable '{name}' is required")
 
         return value
+
+    def _env_bool(self, name: str, default: bool = False) -> bool:
+        value = os.getenv(name)
+
+        if value is None:
+            return default
+
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
     def _validate_log_level(self):
         allowed_levels = {
@@ -76,6 +108,28 @@ class Settings:
                 f"Invalid LOG_LEVEL '{self.log_level}'. "
                 f"Allowed values: {', '.join(sorted(allowed_levels))}"
             )
+
+    def _validate_mattermost_bots(self) -> None:
+        if self.mattermost_pf_scout_enabled and not self.mattermost_pf_scout_bot_token:
+            raise RuntimeError(
+                "MATTERMOST_PF_SCOUT_BOT_TOKEN is required when "
+                "MATTERMOST_PF_SCOUT_ENABLED=true"
+            )
+
+        if self.mattermost_pf_scout_enabled and not self.mattermost_pf_scout_project_key:
+            raise RuntimeError(
+                "MATTERMOST_PF_SCOUT_PROJECT_KEY is required when "
+                "MATTERMOST_PF_SCOUT_ENABLED=true"
+            )
+
+        if self.mattermost_bot_reconnect_seconds < 1:
+            raise RuntimeError("MATTERMOST_BOT_RECONNECT_SECONDS must be >= 1")
+
+        if self.mattermost_bot_worker_count < 1:
+            raise RuntimeError("MATTERMOST_BOT_WORKER_COUNT must be >= 1")
+
+        if self.mattermost_bot_max_post_chars < 1000:
+            raise RuntimeError("MATTERMOST_BOT_MAX_POST_CHARS must be >= 1000")
 
 
 @lru_cache
