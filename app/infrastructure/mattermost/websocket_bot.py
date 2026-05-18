@@ -60,6 +60,13 @@ class MattermostWebSocketBotRunner:
         if not self.bot_user_id:
             raise RuntimeError(f"Mattermost bot user id was not returned: name={self.name}")
 
+        logger.info(
+            "Mattermost bot identity loaded: name=%s, bot_user_id=%s, username=%s",
+            self.name,
+            self.bot_user_id,
+            me.get("username"),
+        )
+
         self._stop_event.clear()
         self._thread = threading.Thread(
             target=self._run_forever,
@@ -170,23 +177,42 @@ class MattermostWebSocketBotRunner:
             return
 
         event = payload.get("event")
+        status = payload.get("status")
+
+        if status:
+            logger.info(
+                "Mattermost websocket status received: name=%s, status=%s, seq_reply=%s",
+                self.name,
+                status,
+                payload.get("seq_reply"),
+            )
 
         if event == "hello":
             logger.info("Mattermost websocket hello received: name=%s", self.name)
             return
 
         if event != "posted":
+            if event:
+                logger.debug(
+                    "Mattermost websocket event ignored: name=%s, event=%s",
+                    self.name,
+                    event,
+                )
             return
 
         self._handle_posted_event(payload)
 
     def _handle_posted_event(self, payload: dict[str, Any]) -> None:
         data = payload.get("data") or {}
-
-        if data.get("channel_type") != "D":
-            return
-
         raw_post = data.get("post")
+
+        logger.info(
+            "Mattermost posted event received: name=%s, channel_type=%s, has_post=%s",
+            self.name,
+            data.get("channel_type"),
+            bool(raw_post),
+        )
+
         if not raw_post:
             return
 
@@ -200,23 +226,62 @@ class MattermostWebSocketBotRunner:
             )
             return
 
-        post_type = post.get("type") or ""
-        if post_type:
-            return
-
         post_id = post.get("id") or ""
         channel_id = post.get("channel_id") or ""
         user_id = post.get("user_id") or ""
+        post_type = post.get("type") or ""
         message = (post.get("message") or "").strip()
         create_at = post.get("create_at")
 
         if not post_id or not channel_id or not user_id:
+            logger.debug(
+                "Mattermost post ignored because required fields are missing: "
+                "name=%s, post_id=%s, channel_id=%s, user_id=%s",
+                self.name,
+                post_id,
+                channel_id,
+                user_id,
+            )
+            return
+
+        channel_type = data.get("channel_type") or self._load_channel_type(channel_id)
+
+        if channel_type != "D":
+            logger.debug(
+                "Mattermost post ignored because channel is not direct: "
+                "name=%s, channel_id=%s, channel_type=%s, post_id=%s",
+                self.name,
+                channel_id,
+                channel_type,
+                post_id,
+            )
+            return
+
+        if post_type:
+            logger.debug(
+                "Mattermost post ignored because post type is not empty: "
+                "name=%s, post_id=%s, post_type=%s",
+                self.name,
+                post_id,
+                post_type,
+            )
             return
 
         if self.bot_user_id and user_id == self.bot_user_id:
+            logger.debug(
+                "Mattermost post ignored because it was sent by the bot itself: "
+                "name=%s, post_id=%s",
+                self.name,
+                post_id,
+            )
             return
 
         if not message:
+            logger.debug(
+                "Mattermost post ignored because message is empty: name=%s, post_id=%s",
+                self.name,
+                post_id,
+            )
             return
 
         direct_message = MattermostDirectMessage(
@@ -239,6 +304,27 @@ class MattermostWebSocketBotRunner:
         )
 
         self._executor.submit(self._safe_handle_direct_message, direct_message)
+
+    def _load_channel_type(self, channel_id: str) -> str | None:
+        try:
+            channel = self.client.get_channel(channel_id)
+            channel_type = channel.get("type")
+            logger.info(
+                "Mattermost channel type loaded through REST fallback: "
+                "name=%s, channel_id=%s, channel_type=%s",
+                self.name,
+                channel_id,
+                channel_type,
+            )
+            return channel_type
+        except Exception:
+            logger.exception(
+                "Failed to load Mattermost channel through REST fallback: "
+                "name=%s, channel_id=%s",
+                self.name,
+                channel_id,
+            )
+            return None
 
     def _safe_handle_direct_message(self, message: MattermostDirectMessage) -> None:
         try:

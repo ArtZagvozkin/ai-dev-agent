@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 from functools import lru_cache
 
@@ -38,6 +39,19 @@ class Settings:
             "packetfence",
         ).strip()
 
+        self.mattermost_code_reviewer_enabled = self._env_bool(
+            "MATTERMOST_CODE_REVIEWER_ENABLED",
+            default=False,
+        )
+        self.mattermost_code_reviewer_bot_token = os.getenv(
+            "MATTERMOST_CODE_REVIEWER_BOT_TOKEN",
+            self.mattermost_bot_token,
+        ).strip()
+        self.mattermost_code_reviewer_jira_key_pattern = os.getenv(
+            "MATTERMOST_CODE_REVIEWER_JIRA_KEY_PATTERN",
+            r"[A-Z][A-Z0-9]+-\d+",
+        ).strip()
+
         self.mattermost_bot_reconnect_seconds = int(
             os.getenv("MATTERMOST_BOT_RECONNECT_SECONDS", "5")
         )
@@ -56,6 +70,7 @@ class Settings:
         self.embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
         self.embedding_api_key = os.getenv("EMBEDDING_API_KEY", self.openrouter_api_key)
         self.embedding_base_url = os.getenv("EMBEDDING_BASE_URL", self.base_url)
+
         embedding_dimensions = os.getenv("EMBEDDING_DIMENSIONS", "").strip()
         self.embedding_dimensions = int(embedding_dimensions) if embedding_dimensions else None
         self.embedding_batch_size = int(os.getenv("EMBEDDING_BATCH_SIZE", "64"))
@@ -68,7 +83,11 @@ class Settings:
             "QDRANT_LOCAL_PATH",
             os.path.join(tempfile.gettempdir(), "ai-dev-agent-qdrant"),
         )
-        self.qdrant_prefer_grpc = os.getenv("QDRANT_PREFER_GRPC", "false").lower() in {"1", "true", "yes"}
+        self.qdrant_prefer_grpc = os.getenv("QDRANT_PREFER_GRPC", "false").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
 
         self.log_dir = os.getenv("LOG_DIR", "logs")
         self.log_level = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -121,6 +140,32 @@ class Settings:
                 "MATTERMOST_PF_SCOUT_PROJECT_KEY is required when "
                 "MATTERMOST_PF_SCOUT_ENABLED=true"
             )
+
+        if (
+            self.mattermost_code_reviewer_enabled
+            and not self.mattermost_code_reviewer_bot_token
+        ):
+            raise RuntimeError(
+                "MATTERMOST_CODE_REVIEWER_BOT_TOKEN is required when "
+                "MATTERMOST_CODE_REVIEWER_ENABLED=true"
+            )
+
+        if (
+            self.mattermost_code_reviewer_enabled
+            and not self.mattermost_code_reviewer_jira_key_pattern
+        ):
+            raise RuntimeError(
+                "MATTERMOST_CODE_REVIEWER_JIRA_KEY_PATTERN is required when "
+                "MATTERMOST_CODE_REVIEWER_ENABLED=true"
+            )
+
+        try:
+            re.compile(self.mattermost_code_reviewer_jira_key_pattern)
+        except re.error as exc:
+            raise RuntimeError(
+                "Invalid MATTERMOST_CODE_REVIEWER_JIRA_KEY_PATTERN: "
+                f"{exc}"
+            ) from exc
 
         if self.mattermost_bot_reconnect_seconds < 1:
             raise RuntimeError("MATTERMOST_BOT_RECONNECT_SECONDS must be >= 1")

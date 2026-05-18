@@ -78,6 +78,9 @@ class MattermostClient:
     def get_me(self) -> dict:
         return self._get("/users/me")
 
+    def get_channel(self, channel_id: str) -> dict:
+        return self._get(f"/channels/{channel_id}")
+
     def create_post(
         self,
         channel_id: str,

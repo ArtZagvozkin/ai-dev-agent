@@ -4,6 +4,7 @@ from collections.abc import Generator
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
+from app.application.bots.code_review_mattermost import MattermostCodeReviewBot
 from app.application.bots.codebase_consultation_mattermost import (
     MattermostCodebaseConsultationBot,
 )
@@ -67,11 +68,6 @@ mattermost = MattermostClient(
 
 diff_line_localizer = DiffLineLocalizer()
 
-review_comment_publisher = ReviewCommentPublisher(
-    gitlab=gitlab,
-    localizer=diff_line_localizer,
-)
-
 embedding_client = build_embedding_client(settings)
 vector_store_factory = build_vector_store_factory(settings)
 
@@ -88,15 +84,27 @@ persistent_codebase_indexer = CodebaseIndexer(
 
 persistent_codebase_index_cache = PersistentCodebaseIndexCache()
 
-code_review_workflow = CodeReviewWorkflow(
-    llm=llm,
-    context_builder=context_builder,
-    gitlab=gitlab,
-    jira=jira,
-    comment_publisher=review_comment_publisher,
-)
-
 mattermost_bot_runners: list[MattermostWebSocketBotRunner] = []
+
+
+def build_code_review_workflow_for_gitlab(
+    gitlab_client: GitLabClient,
+) -> CodeReviewWorkflow:
+    comment_publisher = ReviewCommentPublisher(
+        gitlab=gitlab_client,
+        localizer=diff_line_localizer,
+    )
+
+    return CodeReviewWorkflow(
+        llm=llm,
+        context_builder=context_builder,
+        gitlab=gitlab_client,
+        jira=jira,
+        comment_publisher=comment_publisher,
+    )
+
+
+code_review_workflow = build_code_review_workflow_for_gitlab(gitlab)
 
 
 def get_db_session() -> Generator[Session, None, None]:
@@ -197,14 +205,22 @@ def get_codebase_index_build_service(
 
 
 def start_mattermost_bots() -> None:
-    if not settings.mattermost_pf_scout_enabled:
-        logger.info("Mattermost pf_scout bot is disabled")
+    if not settings.mattermost_pf_scout_enabled and not settings.mattermost_code_reviewer_enabled:
+        logger.info("Mattermost bots are disabled")
         return
 
     if mattermost_bot_runners:
         logger.warning("Mattermost bot runners are already started")
         return
 
+    if settings.mattermost_pf_scout_enabled:
+        _start_pf_scout_bot()
+
+    if settings.mattermost_code_reviewer_enabled:
+        _start_code_reviewer_bot()
+
+
+def _start_pf_scout_bot() -> None:
     try:
         session_factory = get_session_factory()
 
@@ -239,6 +255,37 @@ def start_mattermost_bots() -> None:
 
     except Exception:
         logger.exception("Failed to start Mattermost pf_scout bot")
+
+
+def _start_code_reviewer_bot() -> None:
+    try:
+        code_reviewer_client = MattermostClient(
+            base_url=settings.mattermost_url,
+            token=settings.mattermost_code_reviewer_bot_token,
+        )
+
+        code_reviewer_bot = MattermostCodeReviewBot(
+            mattermost=code_reviewer_client,
+            settings=settings,
+            workflow_factory=build_code_review_workflow_for_gitlab,
+            max_post_chars=settings.mattermost_bot_max_post_chars,
+        )
+
+        code_reviewer_runner = MattermostWebSocketBotRunner(
+            name="code_reviewer",
+            client=code_reviewer_client,
+            on_direct_message=code_reviewer_bot.handle_direct_message,
+            reconnect_seconds=settings.mattermost_bot_reconnect_seconds,
+            worker_count=settings.mattermost_bot_worker_count,
+        )
+
+        code_reviewer_runner.start()
+        mattermost_bot_runners.append(code_reviewer_runner)
+
+        logger.info("Mattermost code_reviewer bot started")
+
+    except Exception:
+        logger.exception("Failed to start Mattermost code_reviewer bot")
 
 
 def stop_mattermost_bots() -> None:

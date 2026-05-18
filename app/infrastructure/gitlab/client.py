@@ -7,11 +7,25 @@ from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
+
 class GitLabClient:
     def __init__(self, base_url: str, token: str, project_id: str):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.project_id = project_id
+
+    def with_project_id(self, project_id: str) -> "GitLabClient":
+        return GitLabClient(
+            base_url=self.base_url,
+            token=self.token,
+            project_id=project_id,
+        )
+
+    def project_web_url(self) -> str:
+        if str(self.project_id).startswith(("http://", "https://")):
+            return str(self.project_id).removesuffix(".git").rstrip("/")
+
+        return f"{self.base_url}/{str(self.project_id).removesuffix('.git').strip('/')}"
 
     def _headers(self) -> dict:
         return {"PRIVATE-TOKEN": self.token}
@@ -35,11 +49,20 @@ class GitLabClient:
             raise HTTPException(status_code=502, detail=f"GitLab request failed: {e}")
 
         if response.status_code == 401:
-            raise HTTPException(status_code=401, detail="GitLab authentication failed. Check GITLAB_TOKEN")
+            raise HTTPException(
+                status_code=401,
+                detail="GitLab authentication failed. Check GITLAB_TOKEN",
+            )
+
         if response.status_code == 403:
             raise HTTPException(status_code=403, detail="GitLab access denied")
+
         if response.status_code == 404:
-            raise HTTPException(status_code=404, detail=f"GitLab resource not found: {path}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"GitLab resource not found: {path}",
+            )
+
         if not response.ok:
             raise HTTPException(
                 status_code=502,
@@ -64,11 +87,20 @@ class GitLabClient:
             raise HTTPException(status_code=502, detail=f"GitLab request failed: {e}")
 
         if response.status_code == 401:
-            raise HTTPException(status_code=401, detail="GitLab authentication failed. Check GITLAB_TOKEN")
+            raise HTTPException(
+                status_code=401,
+                detail="GitLab authentication failed. Check GITLAB_TOKEN",
+            )
+
         if response.status_code == 403:
             raise HTTPException(status_code=403, detail="GitLab access denied")
+
         if response.status_code == 404:
-            raise HTTPException(status_code=404, detail=f"GitLab resource not found: {path}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"GitLab resource not found: {path}",
+            )
+
         if not response.ok:
             raise HTTPException(
                 status_code=502,
@@ -113,6 +145,7 @@ class GitLabClient:
 
     def get_latest_merge_request_version(self, mr_iid: int) -> dict:
         versions = self.get_merge_request_versions(mr_iid)
+
         if not versions:
             raise HTTPException(
                 status_code=404,
@@ -179,6 +212,7 @@ class GitLabClient:
         return {
             "id": mr.get("id"),
             "iid": mr.get("iid"),
+            "web_url": mr.get("web_url", ""),
             "title": mr.get("title", ""),
             "description": mr.get("description", ""),
             "author": {
