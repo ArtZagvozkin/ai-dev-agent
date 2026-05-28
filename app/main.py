@@ -22,6 +22,8 @@ from app.api.routes.diagnostics import mattermost as diagnostics_mattermost  # n
 from app.api.routes.diagnostics import llm as diagnostics_llm  # noqa: E402
 from app.api.routes.codebase import code_projects  # noqa: E402
 from app.api.routes.codebase import codebase_indexes  # noqa: E402
+from app.api.routes.knowledge_base import knowledge_bases  # noqa: E402
+from app.api.routes.knowledge_base import knowledge_base_indexes  # noqa: E402
 from app.api.routes.manual import code_review as manual_code_review  # noqa: E402
 from app.api.routes.manual import codebase_consultation as manual_codebase_consultation  # noqa: E402
 
@@ -47,5 +49,7 @@ app.include_router(diagnostics_mattermost.router)
 app.include_router(diagnostics_llm.router)
 app.include_router(code_projects.router)
 app.include_router(codebase_indexes.router)
+app.include_router(knowledge_bases.router)
+app.include_router(knowledge_base_indexes.router)
 app.include_router(manual_code_review.router)
 app.include_router(manual_codebase_consultation.router)

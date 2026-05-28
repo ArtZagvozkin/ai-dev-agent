@@ -7,6 +7,7 @@ services:
     volumes:
       - /opt/ai-dev-agent/logs:/app/logs
       - /opt/ai-dev-agent/app:/app/app
+      - /opt/ai-dev-agent/tmp:/opt/ai-dev-agent/tmp:ro
       - /opt/packetfence:/opt/packetfence:ro
     command: >
       python -m uvicorn app.main:app

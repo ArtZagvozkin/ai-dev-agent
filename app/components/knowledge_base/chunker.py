@@ -270,7 +270,7 @@ def split_into_sentences(
 def hard_cut(text: str, max_chars: int) -> list[str]:
     value = (text or "").strip()
     if len(value) <= max_chars:
-        return [value]
+        return [value] if value else []
 
     out: list[str] = []
     current = value
@@ -287,7 +287,10 @@ def hard_cut(text: str, max_chars: int) -> list[str]:
         if cut < int(max_chars * 0.60):
             cut = max_chars
 
-        out.append(current[:cut].strip())
+        part = current[:cut].strip()
+        if part:
+            out.append(part)
+
         current = current[cut:].strip()
 
     if current:
@@ -573,13 +576,9 @@ def build_contextualized_text(
 ) -> str:
     title = norm_text(article.get("title") or "", rx)
     full_title = norm_text(article.get("full_title") or "", rx)
-    source_url = norm_text(article.get("source_url") or "", rx)
 
     section_path = chunk.get("section_path") or []
     section = " / ".join(str(value) for value in section_path if str(value).strip())
-
-    block_types = chunk.get("block_types") or []
-    block_types_text = ", ".join(str(value) for value in block_types if str(value).strip())
 
     text = norm_text(chunk.get("text") or "", rx)
 
@@ -593,12 +592,6 @@ def build_contextualized_text(
 
     if section:
         parts.append(f"Раздел: {section}")
-
-    if block_types_text:
-        parts.append(f"Типы блоков: {block_types_text}")
-
-    if source_url:
-        parts.append(f"Источник: {source_url}")
 
     if text:
         parts.append(text)
@@ -644,7 +637,7 @@ def chunk_article(
 
         text = join_nonempty(buf_parts, rx)
 
-        if not text and not buf_images:
+        if not text:
             buf_parts = []
             buf_types = []
             buf_images = []
@@ -677,13 +670,13 @@ def chunk_article(
     ) -> None:
         nonlocal buf_len
 
-        if not text and not images:
+        text = norm_text(text, rx)
+        if not text:
             return
 
-        if text:
-            buf_parts.append(text)
-            buf_types.extend(block_types)
-            buf_len += len(text)
+        buf_parts.append(text)
+        buf_types.extend(block_types)
+        buf_len += len(text)
 
         if images:
             buf_images.extend(images)
@@ -695,13 +688,13 @@ def chunk_article(
     ) -> None:
         nonlocal chunk_ord
 
-        parts = split_best_effort(block_text, cfg, rx, cfg.max_chars) if block_text else [""]
+        parts = split_best_effort(block_text, cfg, rx, cfg.max_chars)
         clean_images = dedupe_images(images)
 
         for part in parts:
             part = norm_text(part, rx)
 
-            if not part and not clean_images:
+            if not part:
                 continue
 
             chunks.append(
@@ -718,6 +711,26 @@ def chunk_article(
 
             chunk_ord += 1
 
+    def add_or_merge_pending_callout(
+        callout_text: str,
+        images: list[dict[str, Any]],
+    ) -> None:
+        nonlocal pending_small_callout
+
+        callout_text = norm_text(callout_text, rx)
+        if not callout_text:
+            return
+
+        if not pending_small_callout:
+            pending_small_callout = (callout_text, images)
+            return
+
+        previous_text, previous_images = pending_small_callout
+        merged_text = join_nonempty([previous_text, callout_text], rx)
+        merged_images = dedupe_images((previous_images or []) + (images or []))
+
+        pending_small_callout = (merged_text, merged_images)
+
     def attach_pending_callout(
         text: str,
         images: list[dict[str, Any]],
@@ -731,7 +744,7 @@ def chunk_article(
         callout_text, callout_images = pending_small_callout
         pending_small_callout = None
 
-        merged_text = join_nonempty([callout_text, text], rx) if callout_text else text
+        merged_text = join_nonempty([callout_text, text], rx)
         merged_images = dedupe_images((callout_images or []) + (images or []))
         merged_block_types = compact_block_types(["callout"] + block_types)
 
@@ -750,6 +763,8 @@ def chunk_article(
         flush_buf_if_any()
 
         text = norm_text(callout_text, rx)
+        if not text:
+            return
 
         chunks.append(
             {
@@ -795,7 +810,7 @@ def chunk_article(
             callout_text = norm_text(block_text, rx)
 
             if callout_text and len(callout_text) <= cfg.callout_merge_max_chars:
-                pending_small_callout = (callout_text, images)
+                add_or_merge_pending_callout(callout_text, images)
                 continue
 
             emit_pending_callout_if_any()
@@ -812,7 +827,10 @@ def chunk_article(
                 block_types=block_types,
             )
 
-        if block_text and len(block_text) > cfg.max_chars:
+        if not block_text:
+            continue
+
+        if len(block_text) > cfg.max_chars:
             flush_buf_if_any()
             emit_as_own_chunks(block_types, block_text, images)
             continue
@@ -831,7 +849,7 @@ def chunk_article(
 
             continue
 
-        if buf_len and block_text and (buf_len + 2 + len(block_text)) > cfg.max_chars:
+        if buf_len and (buf_len + 2 + len(block_text)) > cfg.max_chars:
             flush_buf_if_any()
 
         buf_add(block_text, block_types, images)
@@ -863,48 +881,63 @@ def merge_tiny_chunks(
 
     while index < len(chunks):
         current = chunks[index]
+        current_text = norm_text(current.get("text") or "", rx)
+
+        if not current_text:
+            index += 1
+            continue
 
         if (
             index + 1 < len(chunks)
-            and len(current["text"]) < cfg.min_chars
-            and len(current["text"]) + 2 + len(chunks[index + 1]["text"]) <= cfg.max_chars
+            and len(current_text) < cfg.min_chars
+            and len(current_text) + 2 + len(chunks[index + 1].get("text") or "") <= cfg.max_chars
             and current.get("section_path") == chunks[index + 1].get("section_path")
         ):
             next_chunk = chunks[index + 1]
+            next_text = norm_text(next_chunk.get("text") or "", rx)
 
-            merged_text = join_nonempty(
-                [current.get("text") or "", next_chunk.get("text") or ""],
-                rx,
-            )
+            if next_text:
+                merged_text = join_nonempty(
+                    [current_text, next_text],
+                    rx,
+                )
 
-            merged_images = dedupe_images(
-                (current.get("images") or []) + (next_chunk.get("images") or [])
-            )
+                merged_images = dedupe_images(
+                    (current.get("images") or []) + (next_chunk.get("images") or [])
+                )
 
-            merged.append(
-                {
-                    "chunk_id": current["chunk_id"],
-                    "chunk_ord": current["chunk_ord"],
-                    "section_path": current.get("section_path") or [],
-                    "block_types": compact_block_types(
-                        (current.get("block_types") or [])
-                        + (next_chunk.get("block_types") or [])
-                    ),
-                    "images": merged_images,
-                    "text": merged_text,
-                    "char_len": len(merged_text),
-                }
-            )
+                merged.append(
+                    {
+                        "chunk_id": current["chunk_id"],
+                        "chunk_ord": current["chunk_ord"],
+                        "section_path": current.get("section_path") or [],
+                        "block_types": compact_block_types(
+                            (current.get("block_types") or [])
+                            + (next_chunk.get("block_types") or [])
+                        ),
+                        "images": merged_images,
+                        "text": merged_text,
+                        "char_len": len(merged_text),
+                    }
+                )
 
-            index += 2
-            continue
+                index += 2
+                continue
 
-        merged.append(current)
+        merged.append(
+            {
+                **current,
+                "text": current_text,
+                "char_len": len(current_text),
+            }
+        )
         index += 1
 
     out: list[dict[str, Any]] = []
     for chunk_ord, chunk in enumerate(merged, start=1):
         text = norm_text(chunk.get("text") or "", rx)
+        if not text:
+            continue
 
         out.append(
             {
@@ -980,7 +1013,12 @@ def finalize_chunks(
 
     for chunk in chunks:
         text = norm_text(chunk.get("text") or "", rx)
+        if not text:
+            continue
+
         contextualized_text = build_contextualized_text(article, chunk, rx)
+        if not contextualized_text:
+            continue
 
         chunk_payload = {
             **chunk,

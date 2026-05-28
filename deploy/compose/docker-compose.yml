@@ -9,6 +9,7 @@ services:
       - /opt/ai-dev-agent/.env
     volumes:
       - /opt/ai-dev-agent/logs:/app/logs
+      - /opt/ai-dev-agent/tmp:/opt/ai-dev-agent/tmp:ro
     depends_on:
       postgres:
         condition: service_healthy

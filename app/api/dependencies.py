@@ -27,6 +27,9 @@ from app.repositories.code_chunks import CodeChunkRepository
 from app.repositories.code_projects import CodeProjectRepository
 from app.repositories.codebase_files import CodebaseFileRepository
 from app.repositories.codebase_indexes import CodebaseIndexRepository
+from app.repositories.knowledge_base_documents import KnowledgeBaseDocumentRepository
+from app.repositories.knowledge_base_indexes import KnowledgeBaseIndexRepository
+from app.repositories.knowledge_bases import KnowledgeBaseRepository
 from app.services.codebase.code_projects import CodeProjectService
 from app.services.codebase.codebase_consultation_index import (
     PersistentCodebaseIndexCache,
@@ -34,6 +37,10 @@ from app.services.codebase.codebase_consultation_index import (
 )
 from app.services.codebase.codebase_index_build import CodebaseIndexBuildService
 from app.services.codebase.codebase_indexes import CodebaseIndexService
+from app.services.knowledge_base.knowledge_base_index_build import (
+    KnowledgeBaseIndexBuildService,
+)
+from app.services.knowledge_base.knowledge_bases import KnowledgeBaseService
 
 
 logger = logging.getLogger(__name__)
@@ -201,6 +208,41 @@ def get_codebase_index_build_service(
         file_repository=CodebaseFileRepository(session),
         chunk_repository=CodeChunkRepository(session),
         indexer=persistent_codebase_indexer,
+    )
+
+
+def get_knowledge_base_repository(
+    session: Session = Depends(get_db_session),
+) -> KnowledgeBaseRepository:
+    return KnowledgeBaseRepository(session)
+
+
+def get_knowledge_base_service(
+    session: Session = Depends(get_db_session),
+) -> KnowledgeBaseService:
+    return KnowledgeBaseService(
+        settings=settings,
+        session=session,
+        repository=KnowledgeBaseRepository(session),
+        index_repository=KnowledgeBaseIndexRepository(session),
+    )
+
+
+def get_knowledge_base_index_repository(
+    session: Session = Depends(get_db_session),
+) -> KnowledgeBaseIndexRepository:
+    return KnowledgeBaseIndexRepository(session)
+
+
+def get_knowledge_base_index_build_service(
+    session: Session = Depends(get_db_session),
+) -> KnowledgeBaseIndexBuildService:
+    return KnowledgeBaseIndexBuildService(
+        settings=settings,
+        session=session,
+        knowledge_base_repository=KnowledgeBaseRepository(session),
+        index_repository=KnowledgeBaseIndexRepository(session),
+        document_repository=KnowledgeBaseDocumentRepository(session),
     )
 
 
