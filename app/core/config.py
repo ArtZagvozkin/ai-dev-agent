@@ -24,7 +24,7 @@ class Settings:
         self.jira_api_token = self._get_required_env("JIRA_API_TOKEN")
 
         self.mattermost_url = self._get_required_env("MATTERMOST_URL")
-        self.mattermost_bot_token = self._get_required_env("MATTERMOST_BOT_TOKEN")
+        self.mattermost_bot_token = os.getenv("MATTERMOST_BOT_TOKEN", "").strip()
 
         self.mattermost_pf_scout_enabled = self._env_bool(
             "MATTERMOST_PF_SCOUT_ENABLED",
@@ -50,6 +50,19 @@ class Settings:
         self.mattermost_code_reviewer_jira_key_pattern = os.getenv(
             "MATTERMOST_CODE_REVIEWER_JIRA_KEY_PATTERN",
             r"[A-Z][A-Z0-9]+-\d+",
+        ).strip()
+
+        self.mattermost_anac_advisor_enabled = self._env_bool(
+            "MATTERMOST_ANAC_ADVISOR_ENABLED",
+            default=False,
+        )
+        self.mattermost_anac_advisor_bot_token = os.getenv(
+            "MATTERMOST_ANAC_ADVISOR_BOT_TOKEN",
+            self.mattermost_bot_token,
+        ).strip()
+        self.mattermost_anac_advisor_kb_key = os.getenv(
+            "MATTERMOST_ANAC_ADVISOR_KB_KEY",
+            "axel-docs",
         ).strip()
 
         self.mattermost_bot_reconnect_seconds = int(
@@ -166,6 +179,24 @@ class Settings:
                 "Invalid MATTERMOST_CODE_REVIEWER_JIRA_KEY_PATTERN: "
                 f"{exc}"
             ) from exc
+
+        if (
+            self.mattermost_anac_advisor_enabled
+            and not self.mattermost_anac_advisor_bot_token
+        ):
+            raise RuntimeError(
+                "MATTERMOST_ANAC_ADVISOR_BOT_TOKEN is required when "
+                "MATTERMOST_ANAC_ADVISOR_ENABLED=true"
+            )
+
+        if (
+            self.mattermost_anac_advisor_enabled
+            and not self.mattermost_anac_advisor_kb_key
+        ):
+            raise RuntimeError(
+                "MATTERMOST_ANAC_ADVISOR_KB_KEY is required when "
+                "MATTERMOST_ANAC_ADVISOR_ENABLED=true"
+            )
 
         if self.mattermost_bot_reconnect_seconds < 1:
             raise RuntimeError("MATTERMOST_BOT_RECONNECT_SECONDS must be >= 1")

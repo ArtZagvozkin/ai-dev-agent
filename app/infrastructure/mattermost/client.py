@@ -75,6 +75,9 @@ class MattermostClient:
     def _post(self, path: str, json: dict | None = None) -> dict:
         return self._request("POST", path, json=json)
 
+    def _delete(self, path: str) -> dict:
+        return self._request("DELETE", path)
+
     def get_me(self) -> dict:
         return self._get("/users/me")
 
@@ -99,3 +102,9 @@ class MattermostClient:
             "/posts",
             json=payload,
         )
+
+    def delete_post(
+        self,
+        post_id: str,
+    ) -> dict:
+        return self._delete(f"/posts/{post_id}")

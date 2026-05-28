@@ -8,6 +8,9 @@ from app.application.bots.code_review_mattermost import MattermostCodeReviewBot
 from app.application.bots.codebase_consultation_mattermost import (
     MattermostCodebaseConsultationBot,
 )
+from app.application.bots.knowledge_base_consultation_mattermost import (
+    MattermostKnowledgeBaseConsultationBot,
+)
 from app.application.skills.code_review.context_builder import ContextBuilder
 from app.application.skills.code_review.workflow import CodeReviewWorkflow
 from app.application.skills.codebase_consultation.workflow import CodebaseConsultationWorkflow
@@ -278,7 +281,11 @@ def get_knowledge_base_index_build_service(
 
 
 def start_mattermost_bots() -> None:
-    if not settings.mattermost_pf_scout_enabled and not settings.mattermost_code_reviewer_enabled:
+    if (
+        not settings.mattermost_pf_scout_enabled
+        and not settings.mattermost_code_reviewer_enabled
+        and not settings.mattermost_anac_advisor_enabled
+    ):
         logger.info("Mattermost bots are disabled")
         return
 
@@ -291,6 +298,9 @@ def start_mattermost_bots() -> None:
 
     if settings.mattermost_code_reviewer_enabled:
         _start_code_reviewer_bot()
+
+    if settings.mattermost_anac_advisor_enabled:
+        _start_anac_advisor_bot()
 
 
 def _start_pf_scout_bot() -> None:
@@ -359,6 +369,43 @@ def _start_code_reviewer_bot() -> None:
 
     except Exception:
         logger.exception("Failed to start Mattermost code_reviewer bot")
+
+
+def _start_anac_advisor_bot() -> None:
+    try:
+        session_factory = get_session_factory()
+
+        anac_advisor_client = MattermostClient(
+            base_url=settings.mattermost_url,
+            token=settings.mattermost_anac_advisor_bot_token,
+        )
+
+        anac_advisor_bot = MattermostKnowledgeBaseConsultationBot(
+            mattermost=anac_advisor_client,
+            kb_key=settings.mattermost_anac_advisor_kb_key,
+            session_factory=session_factory,
+            workflow_factory=build_knowledge_base_consultation_workflow_for_session,
+            max_post_chars=settings.mattermost_bot_max_post_chars,
+        )
+
+        anac_advisor_runner = MattermostWebSocketBotRunner(
+            name="anac_advisor",
+            client=anac_advisor_client,
+            on_direct_message=anac_advisor_bot.handle_direct_message,
+            reconnect_seconds=settings.mattermost_bot_reconnect_seconds,
+            worker_count=settings.mattermost_bot_worker_count,
+        )
+
+        anac_advisor_runner.start()
+        mattermost_bot_runners.append(anac_advisor_runner)
+
+        logger.info(
+            "Mattermost anac_advisor bot started: kb_key=%s",
+            settings.mattermost_anac_advisor_kb_key,
+        )
+
+    except Exception:
+        logger.exception("Failed to start Mattermost anac_advisor bot")
 
 
 def stop_mattermost_bots() -> None:

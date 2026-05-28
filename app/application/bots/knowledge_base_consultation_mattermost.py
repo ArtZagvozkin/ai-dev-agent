@@ -6,28 +6,28 @@ from collections.abc import Callable
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.application.skills.codebase_consultation.workflow import (
-    CodebaseConsultationWorkflow,
+from app.application.skills.knowledge_base_consultation.workflow import (
+    KnowledgeBaseConsultationWorkflow,
 )
 from app.infrastructure.mattermost.client import MattermostClient
 from app.infrastructure.mattermost.websocket_bot import MattermostDirectMessage
-from app.schemas.api import CodebaseConsultationRequest
+from app.schemas.knowledge_base_consultation import KnowledgeBaseConsultationRequest
 
 
 logger = logging.getLogger(__name__)
 
 
-class MattermostCodebaseConsultationBot:
+class MattermostKnowledgeBaseConsultationBot:
     def __init__(
         self,
         mattermost: MattermostClient,
-        project_key: str,
+        kb_key: str,
         session_factory: Callable[[], Session],
-        workflow_factory: Callable[[Session], CodebaseConsultationWorkflow],
+        workflow_factory: Callable[[Session], KnowledgeBaseConsultationWorkflow],
         max_post_chars: int = 12000,
     ):
         self.mattermost = mattermost
-        self.project_key = project_key
+        self.kb_key = kb_key
         self.session_factory = session_factory
         self.workflow_factory = workflow_factory
         self.max_post_chars = max(max_post_chars, 1000)
@@ -39,9 +39,9 @@ class MattermostCodebaseConsultationBot:
             return
 
         logger.info(
-            "Codebase consultation Mattermost request started: "
-            "project_key=%s, channel_id=%s, user_id=%s, post_id=%s, question_size=%s",
-            self.project_key,
+            "Knowledge base consultation Mattermost request started: "
+            "kb_key=%s, channel_id=%s, user_id=%s, post_id=%s, question_size=%s",
+            self.kb_key,
             message.channel_id,
             message.user_id,
             message.post_id,
@@ -55,8 +55,8 @@ class MattermostCodebaseConsultationBot:
                 channel_id=message.channel_id,
                 message=(
                     "Принял вопрос в работу.\n\n"
-                    f"Проект: `{self._safe_inline(self.project_key)}`\n"
-                    "Ищу релевантный контекст в индексе кодовой базы и готовлю ответ."
+                    f"База знаний: `{self._safe_inline(self.kb_key)}`\n"
+                    "Ищу релевантные материалы в индексе базы знаний и готовлю ответ."
                 ),
                 root_id=message.post_id,
             )
@@ -65,8 +65,8 @@ class MattermostCodebaseConsultationBot:
             workflow = self.workflow_factory(session)
 
             result = workflow.run(
-                CodebaseConsultationRequest(
-                    project_id=self.project_key,
+                KnowledgeBaseConsultationRequest(
+                    kb_key=self.kb_key,
                     question=question,
                 )
             )
@@ -83,9 +83,9 @@ class MattermostCodebaseConsultationBot:
             )
 
             logger.info(
-                "Codebase consultation Mattermost request completed: "
-                "project_key=%s, channel_id=%s, user_id=%s, post_id=%s",
-                self.project_key,
+                "Knowledge base consultation Mattermost request completed: "
+                "kb_key=%s, channel_id=%s, user_id=%s, post_id=%s",
+                self.kb_key,
                 message.channel_id,
                 message.user_id,
                 message.post_id,
@@ -96,9 +96,9 @@ class MattermostCodebaseConsultationBot:
                 session.rollback()
 
             logger.exception(
-                "Codebase consultation Mattermost request failed with HTTPException: "
-                "project_key=%s, channel_id=%s, user_id=%s, post_id=%s",
-                self.project_key,
+                "Knowledge base consultation Mattermost request failed with HTTPException: "
+                "kb_key=%s, channel_id=%s, user_id=%s, post_id=%s",
+                self.kb_key,
                 message.channel_id,
                 message.user_id,
                 message.post_id,
@@ -115,9 +115,9 @@ class MattermostCodebaseConsultationBot:
                 session.rollback()
 
             logger.exception(
-                "Codebase consultation Mattermost request failed: "
-                "project_key=%s, channel_id=%s, user_id=%s, post_id=%s",
-                self.project_key,
+                "Knowledge base consultation Mattermost request failed: "
+                "kb_key=%s, channel_id=%s, user_id=%s, post_id=%s",
+                self.kb_key,
                 message.channel_id,
                 message.user_id,
                 message.post_id,
@@ -126,7 +126,7 @@ class MattermostCodebaseConsultationBot:
             self._send_long_message(
                 channel_id=message.channel_id,
                 message=(
-                    "Не удалось выполнить консультацию по кодовой базе.\n\n"
+                    "Не удалось выполнить консультацию по базе знаний.\n\n"
                     f"Ошибка: `{self._safe_inline(str(exc))}`"
                 ),
                 root_id=message.post_id,
@@ -142,13 +142,19 @@ class MattermostCodebaseConsultationBot:
         result: dict,
     ) -> str:
         answer = (result.get("answer") or "").strip()
+        limitations = (result.get("limitations") or "").strip()
         sources = result.get("sources") or []
         index_stats = result.get("index_stats") or {}
-        query_plan = result.get("query_plan") or {}
 
         sections = [
             answer or "Ответ не был сформирован.",
         ]
+
+        if limitations:
+            sections.append(
+                "**Ограничения:**\n"
+                f"{limitations}"
+            )
 
         if sources:
             sections.append(self._format_sources(sources))
@@ -157,7 +163,6 @@ class MattermostCodebaseConsultationBot:
             self._format_footer(
                 question=question,
                 index_stats=index_stats,
-                query_plan=query_plan,
             )
         )
 
@@ -170,26 +175,41 @@ class MattermostCodebaseConsultationBot:
         lines = ["**Источники:**"]
 
         for index, source in enumerate(sources, start=1):
-            path = source.get("path") or "unknown"
-            start_line = source.get("start_line")
-            end_line = source.get("end_line")
-            gitlab_url = source.get("gitlab_url")
-            symbol = source.get("symbol")
-            chunk_type = source.get("chunk_type") or "chunk"
+            title = source.get("title") or "Без названия"
+            full_title = source.get("full_title")
+            source_url = source.get("source_url")
+            section_path = source.get("section_path") or []
+            chunk_id = source.get("chunk_id")
+            chunk_ord = source.get("chunk_ord")
+            score = source.get("score")
 
-            location = path
-            if start_line is not None and end_line is not None:
-                location = f"{path}:{start_line}-{end_line}"
+            title_label = self._safe_inline(str(title))
+            if source_url:
+                title_label = f"[{title_label}]({source_url})"
 
-            location_label = f"`{location}`"
-            if gitlab_url:
-                location_label = f"[`{location}`]({gitlab_url})"
+            lines.append(f"{index}. {title_label}")
 
-            suffix = f" — `{self._safe_inline(str(symbol))}`" if symbol else ""
+            if full_title and full_title != title:
+                lines.append(f"   Путь: `{self._safe_inline(str(full_title))}`")
 
-            lines.append(
-                f"{index}. {location_label} ({chunk_type}){suffix}"
-            )
+            if section_path:
+                section = " / ".join(str(item) for item in section_path if item)
+                if section:
+                    lines.append(f"   Раздел: `{self._safe_inline(section)}`")
+
+            details = []
+
+            if chunk_id:
+                details.append(f"chunk `{self._safe_inline(str(chunk_id))}`")
+
+            if chunk_ord is not None:
+                details.append(f"ord `{chunk_ord}`")
+
+            if score is not None:
+                details.append(f"score `{score}`")
+
+            if details:
+                lines.append(f"   {'; '.join(details)}")
 
         return "\n".join(lines)
 
@@ -197,21 +217,23 @@ class MattermostCodebaseConsultationBot:
         self,
         question: str,
         index_stats: dict,
-        query_plan: dict,
     ) -> str:
-        files_indexed = index_stats.get("files_indexed")
-        chunks_indexed = index_stats.get("chunks_indexed")
-        retrieval_mode = query_plan.get("retrieval_mode") or "unknown"
+        kb_key = index_stats.get("kb_key") or self.kb_key
+        index_id = index_stats.get("index_id")
+        documents_count = index_stats.get("documents_count")
+        chunks_count = index_stats.get("chunks_count")
 
         lines = [
             "---",
-            f"**Проект:** `{self._safe_inline(self.project_key)}`",
-            f"**Retrieval mode:** `{self._safe_inline(str(retrieval_mode))}`",
+            f"**База знаний:** `{self._safe_inline(str(kb_key))}`",
         ]
 
-        if files_indexed is not None and chunks_indexed is not None:
+        if index_id:
+            lines.append(f"**Index ID:** `{self._safe_inline(str(index_id))}`")
+
+        if documents_count is not None and chunks_count is not None:
             lines.append(
-                f"**Индекс:** файлов `{files_indexed}`, chunks `{chunks_indexed}`"
+                f"**Индекс:** документов `{documents_count}`, chunks `{chunks_count}`"
             )
 
         return "\n".join(lines)
@@ -223,7 +245,7 @@ class MattermostCodebaseConsultationBot:
         detail = exc.detail
 
         return (
-            "Не удалось выполнить консультацию по кодовой базе.\n\n"
+            "Не удалось выполнить консультацию по базе знаний.\n\n"
             f"HTTP status: `{exc.status_code}`\n"
             f"Ошибка: `{self._safe_inline(str(detail))}`"
         )
