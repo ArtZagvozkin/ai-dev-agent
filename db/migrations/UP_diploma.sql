@@ -30,6 +30,59 @@ CREATE TABLE code_projects (
 );
 
 
+CREATE TABLE developers (
+    id UUID PRIMARY KEY DEFAULT public.gen_random_uuid(),
+
+    display_name TEXT NOT NULL,
+
+    gitlab_user_id INTEGER,
+    gitlab_username TEXT,
+    gitlab_web_url TEXT,
+
+    email TEXT,
+
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(metadata) = 'object'),
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (gitlab_user_id),
+    UNIQUE (gitlab_username)
+);
+
+
+CREATE TABLE code_review_error_types (
+    id UUID PRIMARY KEY DEFAULT public.gen_random_uuid(),
+
+    error_type_key TEXT NOT NULL UNIQUE CHECK (error_type_key ~ '^[a-z0-9][a-z0-9_-]*$'),
+    display_name TEXT NOT NULL,
+    description TEXT,
+
+    default_severity TEXT,
+
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(metadata) = 'object'),
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+
+INSERT INTO code_review_error_types (
+    error_type_key,
+    display_name,
+    description,
+    default_severity
+)
+VALUES
+    (
+        'unknown',
+        'Unknown',
+        'Fallback type for comments that were not classified yet.',
+        NULL
+    )
+ON CONFLICT (error_type_key) DO NOTHING;
+
+
 CREATE TABLE codebase_indexes (
     id UUID PRIMARY KEY DEFAULT public.gen_random_uuid(),
     project_id UUID NOT NULL REFERENCES code_projects(id) ON DELETE CASCADE,
@@ -115,6 +168,7 @@ CREATE TABLE code_review_runs (
     id UUID PRIMARY KEY DEFAULT public.gen_random_uuid(),
 
     project_id UUID NOT NULL REFERENCES code_projects(id) ON DELETE CASCADE,
+    developer_id UUID NOT NULL REFERENCES developers(id) ON DELETE RESTRICT,
 
     codebase_index_id UUID,
 
@@ -153,6 +207,7 @@ CREATE TABLE code_review_comments (
     id UUID PRIMARY KEY DEFAULT public.gen_random_uuid(),
 
     review_run_id UUID NOT NULL REFERENCES code_review_runs(id) ON DELETE CASCADE,
+    error_type_id UUID NOT NULL REFERENCES code_review_error_types(id) ON DELETE RESTRICT,
 
     comment_order INTEGER NOT NULL CHECK (comment_order > 0),
 
@@ -321,6 +376,23 @@ CREATE TABLE knowledge_base_chunk_images (
 );
 
 
+CREATE INDEX idx_developers_gitlab_user_id
+    ON developers(gitlab_user_id)
+    WHERE gitlab_user_id IS NOT NULL;
+
+CREATE INDEX idx_developers_gitlab_username
+    ON developers(gitlab_username)
+    WHERE gitlab_username IS NOT NULL;
+
+CREATE INDEX idx_developers_email
+    ON developers(email)
+    WHERE email IS NOT NULL;
+
+
+CREATE INDEX idx_code_review_error_types_key
+    ON code_review_error_types(error_type_key);
+
+
 CREATE INDEX idx_codebase_indexes_project_status
     ON codebase_indexes(project_id, status);
 
@@ -344,6 +416,12 @@ CREATE INDEX idx_code_chunks_symbol
 CREATE INDEX idx_code_review_runs_project_id
     ON code_review_runs(project_id);
 
+CREATE INDEX idx_code_review_runs_developer_id
+    ON code_review_runs(developer_id);
+
+CREATE INDEX idx_code_review_runs_project_developer_started_at
+    ON code_review_runs(project_id, developer_id, started_at DESC);
+
 CREATE INDEX idx_code_review_runs_project_started_at
     ON code_review_runs(project_id, started_at DESC);
 
@@ -357,8 +435,15 @@ CREATE INDEX idx_code_review_runs_jira_issue_key
 CREATE INDEX idx_code_review_runs_status
     ON code_review_runs(status);
 
+
 CREATE INDEX idx_code_review_comments_review_run_id
     ON code_review_comments(review_run_id);
+
+CREATE INDEX idx_code_review_comments_error_type_id
+    ON code_review_comments(error_type_id);
+
+CREATE INDEX idx_code_review_comments_review_run_error_type
+    ON code_review_comments(review_run_id, error_type_id);
 
 CREATE INDEX idx_code_review_comments_file_path
     ON code_review_comments(file_path)
