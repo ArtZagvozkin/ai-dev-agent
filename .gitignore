@@ -43,3 +43,6 @@ htmlcov/
 # OS trash
 .DS_Store
 Thumbs.db
+
+# Temporary files
+tmp/
