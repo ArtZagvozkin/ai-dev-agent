@@ -2,9 +2,11 @@ import json
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 from app.components.knowledge_base.chunker import KnowledgeBaseChunkDraft
+from app.domain.knowledge_base_chunks import KnowledgeBaseChunk
 
 
 class KnowledgeBaseDocumentRepository:
@@ -174,6 +176,51 @@ class KnowledgeBaseDocumentRepository:
                     },
                 )
 
+    def list_chunks_by_index(
+        self,
+        index_id: UUID,
+    ) -> list[KnowledgeBaseChunk]:
+        rows = self.session.execute(
+            text(
+                """
+                SELECT
+                    c.id AS db_id,
+                    c.document_id,
+                    d.index_id,
+                    c.chunk_id,
+                    c.chunk_ord,
+                    c.section_path,
+                    c.block_types,
+                    c.text,
+                    c.contextualized_text,
+                    c.char_len,
+                    c.chunk_hash,
+                    c.metadata,
+                    d.external_id,
+                    d.source_url,
+                    d.title,
+                    d.full_title,
+                    d.source_revision,
+                    d.updated_at_src
+                FROM agent.knowledge_base_chunks c
+                JOIN agent.knowledge_base_documents d ON d.id = c.document_id
+                WHERE d.index_id = :index_id
+                ORDER BY
+                    d.external_id,
+                    c.chunk_ord,
+                    c.id
+                """
+            ),
+            {
+                "index_id": index_id,
+            },
+        ).mappings()
+
+        return [
+            self._map_chunk_row(row)
+            for row in rows
+        ]
+
     def _upsert_image(
         self,
         document_id: UUID,
@@ -256,3 +303,75 @@ class KnowledgeBaseDocumentRepository:
             ),
             params,
         ).scalar_one()
+
+    def _map_chunk_row(self, row: RowMapping) -> KnowledgeBaseChunk:
+        return KnowledgeBaseChunk(
+            db_id=row["db_id"],
+            document_id=row["document_id"],
+            index_id=row["index_id"],
+            chunk_id=row["chunk_id"],
+            chunk_ord=row["chunk_ord"],
+            section_path=self._json_list(row["section_path"]),
+            block_types=self._json_list(row["block_types"]),
+            text=row["text"],
+            contextualized_text=row["contextualized_text"],
+            char_len=row["char_len"],
+            chunk_hash=row["chunk_hash"],
+            metadata=self._json_dict(row["metadata"]),
+            external_id=row["external_id"],
+            source_url=row["source_url"],
+            title=row["title"],
+            full_title=row["full_title"],
+            source_revision=row["source_revision"],
+            updated_at_src=row["updated_at_src"],
+        )
+
+    def _json_list(self, value) -> list[str]:
+        if value is None:
+            return []
+
+        if isinstance(value, list):
+            return [
+                str(item)
+                for item in value
+                if item is not None
+            ]
+
+        if isinstance(value, str):
+            try:
+                loaded = json.loads(value)
+            except json.JSONDecodeError:
+                return []
+
+            if isinstance(loaded, list):
+                return [
+                    str(item)
+                    for item in loaded
+                    if item is not None
+                ]
+
+        try:
+            return [
+                str(item)
+                for item in value
+                if item is not None
+            ]
+        except TypeError:
+            return []
+
+    def _json_dict(self, value) -> dict:
+        if value is None:
+            return {}
+
+        if isinstance(value, dict):
+            return dict(value)
+
+        if isinstance(value, str):
+            try:
+                loaded = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+
+            return loaded if isinstance(loaded, dict) else {}
+
+        return {}

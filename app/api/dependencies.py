@@ -11,6 +11,9 @@ from app.application.bots.codebase_consultation_mattermost import (
 from app.application.skills.code_review.context_builder import ContextBuilder
 from app.application.skills.code_review.workflow import CodeReviewWorkflow
 from app.application.skills.codebase_consultation.workflow import CodebaseConsultationWorkflow
+from app.application.skills.knowledge_base_consultation.workflow import (
+    KnowledgeBaseConsultationWorkflow,
+)
 from app.components.code_search.embeddings import build_embedding_client
 from app.components.code_search.indexer import CodebaseIndexCache, CodebaseIndexer
 from app.components.code_search.vector_store import build_vector_store_factory
@@ -37,6 +40,10 @@ from app.services.codebase.codebase_consultation_index import (
 )
 from app.services.codebase.codebase_index_build import CodebaseIndexBuildService
 from app.services.codebase.codebase_indexes import CodebaseIndexService
+from app.services.knowledge_base.knowledge_base_consultation_index import (
+    PersistentKnowledgeBaseIndexCache,
+    PersistentKnowledgeBaseIndexLoader,
+)
 from app.services.knowledge_base.knowledge_base_index_build import (
     KnowledgeBaseIndexBuildService,
 )
@@ -90,6 +97,7 @@ persistent_codebase_indexer = CodebaseIndexer(
 )
 
 persistent_codebase_index_cache = PersistentCodebaseIndexCache()
+persistent_knowledge_base_index_cache = PersistentKnowledgeBaseIndexCache()
 
 mattermost_bot_runners: list[MattermostWebSocketBotRunner] = []
 
@@ -169,6 +177,29 @@ def get_codebase_consultation_workflow(
     session: Session = Depends(get_db_session),
 ) -> CodebaseConsultationWorkflow:
     return build_codebase_consultation_workflow_for_session(session)
+
+
+def build_knowledge_base_consultation_workflow_for_session(
+    session: Session,
+) -> KnowledgeBaseConsultationWorkflow:
+    persistent_index_loader = PersistentKnowledgeBaseIndexLoader(
+        settings=settings,
+        knowledge_base_repository=KnowledgeBaseRepository(session),
+        index_repository=KnowledgeBaseIndexRepository(session),
+        document_repository=KnowledgeBaseDocumentRepository(session),
+        cache=persistent_knowledge_base_index_cache,
+    )
+
+    return KnowledgeBaseConsultationWorkflow(
+        llm=llm,
+        persistent_index_loader=persistent_index_loader,
+    )
+
+
+def get_knowledge_base_consultation_workflow(
+    session: Session = Depends(get_db_session),
+) -> KnowledgeBaseConsultationWorkflow:
+    return build_knowledge_base_consultation_workflow_for_session(session)
 
 
 def get_code_project_repository(

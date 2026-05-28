@@ -26,6 +26,7 @@ from app.api.routes.knowledge_base import knowledge_bases  # noqa: E402
 from app.api.routes.knowledge_base import knowledge_base_indexes  # noqa: E402
 from app.api.routes.manual import code_review as manual_code_review  # noqa: E402
 from app.api.routes.manual import codebase_consultation as manual_codebase_consultation  # noqa: E402
+from app.api.routes.manual import knowledge_base_consultation as manual_knowledge_base_consultation  # noqa: E402
 
 
 @asynccontextmanager
@@ -53,3 +54,4 @@ app.include_router(knowledge_bases.router)
 app.include_router(knowledge_base_indexes.router)
 app.include_router(manual_code_review.router)
 app.include_router(manual_codebase_consultation.router)
+app.include_router(manual_knowledge_base_consultation.router)
