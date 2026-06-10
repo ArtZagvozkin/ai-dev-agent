@@ -11,6 +11,9 @@ from app.application.bots.codebase_consultation_mattermost import (
 from app.application.bots.knowledge_base_consultation_mattermost import (
     MattermostKnowledgeBaseConsultationBot,
 )
+from app.application.bots.knowledge_base_consultation_telegram import (
+    TelegramKnowledgeBaseConsultationBot,
+)
 from app.application.skills.code_review.context_builder import ContextBuilder
 from app.application.skills.code_review.workflow import CodeReviewWorkflow
 from app.application.skills.codebase_consultation.workflow import CodebaseConsultationWorkflow
@@ -29,6 +32,8 @@ from app.infrastructure.gitlab.client import GitLabClient
 from app.infrastructure.jira.client import JiraClient
 from app.infrastructure.mattermost.client import MattermostClient
 from app.infrastructure.mattermost.websocket_bot import MattermostWebSocketBotRunner
+from app.infrastructure.telegram.client import TelegramBotApiClient
+from app.infrastructure.telegram.runner import TelegramLongPollingBotRunner
 from app.repositories.code_chunks import CodeChunkRepository
 from app.repositories.code_projects import CodeProjectRepository
 from app.repositories.codebase_files import CodebaseFileRepository
@@ -103,6 +108,7 @@ persistent_codebase_index_cache = PersistentCodebaseIndexCache()
 persistent_knowledge_base_index_cache = PersistentKnowledgeBaseIndexCache()
 
 mattermost_bot_runners: list[MattermostWebSocketBotRunner] = []
+telegram_bot_runners: list[TelegramLongPollingBotRunner] = []
 
 
 def build_code_review_workflow_for_gitlab(
@@ -417,5 +423,77 @@ def stop_mattermost_bots() -> None:
         except Exception:
             logger.exception(
                 "Failed to stop Mattermost bot runner: name=%s",
+                runner.name,
+            )
+
+
+def start_telegram_bots() -> None:
+    if not settings.telegram_anac_advisor_enabled:
+        logger.info("Telegram bots are disabled")
+        return
+
+    if telegram_bot_runners:
+        logger.warning("Telegram bot runners are already started")
+        return
+
+    if settings.telegram_anac_advisor_enabled:
+        _start_telegram_anac_advisor_bot()
+
+
+def _start_telegram_anac_advisor_bot() -> None:
+    try:
+        session_factory = get_session_factory()
+
+        telegram_client = TelegramBotApiClient(
+            token=settings.telegram_anac_advisor_bot_token,
+            api_base_url=settings.telegram_bot_api_base_url,
+            api_file_base_url=settings.telegram_bot_api_file_base_url,
+            proxy_url=settings.telegram_bot_proxy_url,
+            connect_timeout=settings.telegram_bot_connect_timeout,
+            read_timeout=settings.telegram_bot_read_timeout,
+        )
+
+        telegram_anac_advisor_bot = TelegramKnowledgeBaseConsultationBot(
+            kb_key=settings.telegram_anac_advisor_kb_key,
+            session_factory=session_factory,
+            workflow_factory=build_knowledge_base_consultation_workflow_for_session,
+            max_message_chars=settings.telegram_bot_max_message_chars,
+            allowed_chat_ids=settings.telegram_anac_advisor_allowed_chat_ids,
+        )
+
+        telegram_anac_advisor_runner = TelegramLongPollingBotRunner(
+            name="telegram_anac_advisor",
+            client=telegram_client,
+            on_update=telegram_anac_advisor_bot.handle_update,
+            reconnect_seconds=settings.telegram_bot_reconnect_seconds,
+            poll_timeout=int(max(1, min(settings.telegram_bot_read_timeout - 10, 50))),
+            drop_pending_updates=settings.telegram_bot_drop_pending_updates,
+        )
+
+        telegram_anac_advisor_runner.start()
+        telegram_bot_runners.append(telegram_anac_advisor_runner)
+
+        logger.info(
+            "Telegram anac_advisor bot started: kb_key=%s, allowed_chat_ids=%s, "
+            "proxy_enabled=%s, drop_pending_updates=%s",
+            settings.telegram_anac_advisor_kb_key,
+            sorted(settings.telegram_anac_advisor_allowed_chat_ids),
+            bool(settings.telegram_bot_proxy_url),
+            settings.telegram_bot_drop_pending_updates,
+        )
+
+    except Exception:
+        logger.exception("Failed to start Telegram anac_advisor bot")
+
+
+def stop_telegram_bots() -> None:
+    while telegram_bot_runners:
+        runner = telegram_bot_runners.pop()
+
+        try:
+            runner.stop()
+        except Exception:
+            logger.exception(
+                "Failed to stop Telegram bot runner: name=%s",
                 runner.name,
             )

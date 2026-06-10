@@ -12,6 +12,7 @@ dependencies = [
     "uvicorn",
     "python-dotenv",
     "requests",
+    "requests[socks]",
     "openai",
     "pydantic",
     "qdrant-client",
@@ -20,6 +21,7 @@ dependencies = [
     "SQLAlchemy>=2.0",
     "psycopg[binary]>=3.1",
     "websocket-client>=1.8.0",
+    "python-telegram-bot>=21.0",
 ]
 
 [tool.setuptools.packages.find]

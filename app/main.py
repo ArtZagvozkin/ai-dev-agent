@@ -14,7 +14,12 @@ setup_logging(
     log_backup_days=settings.log_backup_days,
 )
 
-from app.api.dependencies import start_mattermost_bots, stop_mattermost_bots  # noqa: E402
+from app.api.dependencies import (  # noqa: E402
+    start_mattermost_bots,
+    start_telegram_bots,
+    stop_mattermost_bots,
+    stop_telegram_bots,
+)
 from app.api.routes import health  # noqa: E402
 from app.api.routes.diagnostics import gitlab as diagnostics_gitlab  # noqa: E402
 from app.api.routes.diagnostics import jira as diagnostics_jira  # noqa: E402
@@ -32,10 +37,12 @@ from app.api.routes.manual import knowledge_base_consultation as manual_knowledg
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     start_mattermost_bots()
+    start_telegram_bots()
 
     try:
         yield
     finally:
+        stop_telegram_bots()
         stop_mattermost_bots()
 
 

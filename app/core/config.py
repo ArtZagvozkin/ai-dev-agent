@@ -75,6 +75,60 @@ class Settings:
             os.getenv("MATTERMOST_BOT_MAX_POST_CHARS", "12000")
         )
 
+        self.telegram_anac_advisor_enabled = self._env_bool(
+            "TELEGRAM_ANAC_ADVISOR_ENABLED",
+            default=False,
+        )
+        self.telegram_anac_advisor_bot_token = os.getenv(
+            "TELEGRAM_ANAC_ADVISOR_BOT_TOKEN",
+            "",
+        ).strip()
+        self.telegram_anac_advisor_kb_key = os.getenv(
+            "TELEGRAM_ANAC_ADVISOR_KB_KEY",
+            "axel-docs",
+        ).strip()
+        self.telegram_anac_advisor_allowed_chat_ids = self._env_int_set(
+            "TELEGRAM_ANAC_ADVISOR_ALLOWED_CHAT_IDS",
+        )
+
+        self.telegram_bot_reconnect_seconds = int(
+            os.getenv("TELEGRAM_BOT_RECONNECT_SECONDS", "5")
+        )
+        self.telegram_bot_max_message_chars = int(
+            os.getenv("TELEGRAM_BOT_MAX_MESSAGE_CHARS", "3900")
+        )
+        self.telegram_bot_connect_timeout = float(
+            os.getenv("TELEGRAM_BOT_CONNECT_TIMEOUT", "30")
+        )
+        self.telegram_bot_read_timeout = float(
+            os.getenv("TELEGRAM_BOT_READ_TIMEOUT", "60")
+        )
+        self.telegram_bot_write_timeout = float(
+            os.getenv("TELEGRAM_BOT_WRITE_TIMEOUT", "60")
+        )
+        self.telegram_bot_pool_timeout = float(
+            os.getenv("TELEGRAM_BOT_POOL_TIMEOUT", "30")
+        )
+        self.telegram_bot_bootstrap_retries = int(
+            os.getenv("TELEGRAM_BOT_BOOTSTRAP_RETRIES", "-1")
+        )
+        self.telegram_bot_drop_pending_updates = self._env_bool(
+            "TELEGRAM_BOT_DROP_PENDING_UPDATES",
+            default=False,
+        )
+        self.telegram_bot_proxy_url = os.getenv(
+            "TELEGRAM_BOT_PROXY_URL",
+            "",
+        ).strip()
+        self.telegram_bot_api_base_url = os.getenv(
+            "TELEGRAM_BOT_API_BASE_URL",
+            "https://api.telegram.org/bot",
+        ).strip()
+        self.telegram_bot_api_file_base_url = os.getenv(
+            "TELEGRAM_BOT_API_FILE_BASE_URL",
+            "https://api.telegram.org/file/bot",
+        ).strip()
+
         self.agent_context_path = os.getenv("AGENT_CONTEXT_PATH", "AGENT.md")
 
         self.database_url = os.getenv("DATABASE_URL", "").strip()
@@ -109,6 +163,7 @@ class Settings:
 
         self._validate_log_level()
         self._validate_mattermost_bots()
+        self._validate_telegram_bots()
 
     def _get_required_env(self, name: str) -> str:
         value = os.getenv(name)
@@ -125,6 +180,29 @@ class Settings:
             return default
 
         return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    def _env_int_set(self, name: str) -> set[int]:
+        raw_value = os.getenv(name, "").strip()
+
+        if not raw_value:
+            return set()
+
+        values: set[int] = set()
+
+        for item in re.split(r"[,\s]+", raw_value):
+            normalized_item = item.strip()
+
+            if not normalized_item:
+                continue
+
+            try:
+                values.add(int(normalized_item))
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"Invalid integer value in {name}: {normalized_item}"
+                ) from exc
+
+        return values
 
     def _validate_log_level(self):
         allowed_levels = {
@@ -206,6 +284,60 @@ class Settings:
 
         if self.mattermost_bot_max_post_chars < 1000:
             raise RuntimeError("MATTERMOST_BOT_MAX_POST_CHARS must be >= 1000")
+
+    def _validate_telegram_bots(self) -> None:
+        if (
+            self.telegram_anac_advisor_enabled
+            and not self.telegram_anac_advisor_bot_token
+        ):
+            raise RuntimeError(
+                "TELEGRAM_ANAC_ADVISOR_BOT_TOKEN is required when "
+                "TELEGRAM_ANAC_ADVISOR_ENABLED=true"
+            )
+
+        if (
+            self.telegram_anac_advisor_enabled
+            and not self.telegram_anac_advisor_kb_key
+        ):
+            raise RuntimeError(
+                "TELEGRAM_ANAC_ADVISOR_KB_KEY is required when "
+                "TELEGRAM_ANAC_ADVISOR_ENABLED=true"
+            )
+
+        if self.telegram_bot_reconnect_seconds < 1:
+            raise RuntimeError("TELEGRAM_BOT_RECONNECT_SECONDS must be >= 1")
+
+        if not 1000 <= self.telegram_bot_max_message_chars <= 4096:
+            raise RuntimeError(
+                "TELEGRAM_BOT_MAX_MESSAGE_CHARS must be between 1000 and 4096"
+            )
+
+        if self.telegram_bot_connect_timeout <= 0:
+            raise RuntimeError("TELEGRAM_BOT_CONNECT_TIMEOUT must be > 0")
+
+        if self.telegram_bot_read_timeout <= 0:
+            raise RuntimeError("TELEGRAM_BOT_READ_TIMEOUT must be > 0")
+
+        if self.telegram_bot_write_timeout <= 0:
+            raise RuntimeError("TELEGRAM_BOT_WRITE_TIMEOUT must be > 0")
+
+        if self.telegram_bot_pool_timeout <= 0:
+            raise RuntimeError("TELEGRAM_BOT_POOL_TIMEOUT must be > 0")
+
+        if self.telegram_bot_api_base_url and not self.telegram_bot_api_base_url.endswith("/bot"):
+            raise RuntimeError(
+                "TELEGRAM_BOT_API_BASE_URL must end with '/bot', "
+                "for example: https://api.telegram.org/bot"
+            )
+
+        if (
+            self.telegram_bot_api_file_base_url
+            and not self.telegram_bot_api_file_base_url.endswith("/bot")
+        ):
+            raise RuntimeError(
+                "TELEGRAM_BOT_API_FILE_BASE_URL must end with '/bot', "
+                "for example: https://api.telegram.org/file/bot"
+            )
 
 
 @lru_cache
