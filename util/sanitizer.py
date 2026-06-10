@@ -22,7 +22,7 @@ from typing import Any, Optional
 from bs4 import BeautifulSoup, Tag, NavigableString
 
 
-BASE_DIR = "/opt/ai-dev-agent/tmp/docs.axel.pro.707"
+BASE_DIR = "/opt/ai-dev-agent/tmp/docs.axel.pro.max"
 DATA_ROOT = Path(BASE_DIR + "/entries")
 OUT_ROOT = Path(BASE_DIR + "/clean_data")
 
